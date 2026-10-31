@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"id": "si",
+	"version": "${version}",
+	"name": "Si · 点歌台服务端",
+	"description": "内置网页点歌服务：玩家在浏览器登录后点歌，服务端把播放请求推送到该玩家的客户端（需搭配 Cu 客户端模组）。",
+	"authors": [
+		"a6a"
+	],
+	"license": "MIT",
+	"icon": "assets/si/icon.png",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"a6a.dr.Si"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

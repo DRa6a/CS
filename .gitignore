@@ -1,0 +1,40 @@
+# ---- Gradle ----
+.gradle/
+build/
+out/
+classes/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- 开发服务器运行目录（世界、日志、测试账号，不入库）----
+run/
+*/run/
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+*.launch
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 日志 / 崩溃 ----
+*.log
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
+
+# ---- 上游脚手架模板（保留在本地即可）----
+*-template-*.zip
+
+# ---- 助手工作目录 ----
+.workbuddy-ai/

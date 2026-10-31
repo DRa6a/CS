@@ -1,0 +1,470 @@
+package a6a.dr.cu.audio;
+
+import a6a.dr.Cu;
+import a6a.dr.cu.CuConfig;
+import a6a.dr.cu.net.Packets;
+import javazoom.jl.decoder.Bitstream;
+import javazoom.jl.decoder.Decoder;
+import javazoom.jl.decoder.Header;
+import javazoom.jl.decoder.SampleBuffer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
+
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.SourceDataLine;
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+
+/**
+ * 播放引擎。
+ *
+ * <p>线程划分（渲染线程不做任何重活）：</p>
+ * <ul>
+ *   <li><b>Cu-Audio</b>：解码 + 写入声卡，逐首播放</li>
+ *   <li><b>Cu-Download</b>：低优先级，提前把下一首下载到缓存，避免切歌卡顿</li>
+ *   <li><b>客户端主线程</b>：只从队列里取出「发状态包 / 压背景音乐」这类轻量任务执行</li>
+ * </ul>
+ */
+public final class AudioEngine {
+	public static final int STATE_QUEUED = 0;
+	public static final int STATE_PLAYING = 1;
+	public static final int STATE_DONE = 2;
+	public static final int STATE_FAILED = 3;
+
+	private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+			+ "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+	private static final long MAX_BYTES = 96L * 1024 * 1024;
+
+	private static final AudioEngine INSTANCE = new AudioEngine();
+
+	private final LinkedBlockingQueue<Job> queue = new LinkedBlockingQueue<>();
+	private final Map<String, CompletableFuture<Path>> prefetched = new ConcurrentHashMap<>();
+	private final ConcurrentLinkedQueue<Runnable> mainThreadTasks = new ConcurrentLinkedQueue<>();
+	private final AtomicReference<Job> current = new AtomicReference<>();
+
+	private ExecutorService downloader;
+	private Thread worker;
+	private volatile float volume = 0.8f;
+	private volatile CuConfig config;
+
+	private AudioEngine() {
+	}
+
+	public static AudioEngine get() {
+		return INSTANCE;
+	}
+
+	public void init(CuConfig config) {
+		this.config = config;
+		this.volume = config.volume;
+		if (downloader == null) {
+			downloader = Executors.newSingleThreadExecutor(runnable -> {
+				Thread thread = new Thread(runnable, "Cu-Download");
+				thread.setDaemon(true);
+				thread.setPriority(Thread.MIN_PRIORITY);
+				return thread;
+			});
+		}
+		if (worker == null) {
+			worker = new Thread(this::loop, "Cu-Audio");
+			worker.setDaemon(true);
+			worker.start();
+		}
+	}
+
+	/** 客户端 tick 调用：只做轻量主线程任务 */
+	public void tick() {
+		Runnable task;
+		while ((task = mainThreadTasks.poll()) != null) {
+			try {
+				task.run();
+			} catch (Exception ignored) {
+			}
+		}
+		if (current.get() != null) {
+			MusicDucker.keepQuiet();
+		}
+	}
+
+	public float volume() {
+		return volume;
+	}
+
+	public void setVolume(float value) {
+		this.volume = Math.max(0f, Math.min(1f, value));
+	}
+
+	public boolean isPlaying() {
+		return current.get() != null;
+	}
+
+	public int queueSize() {
+		return queue.size();
+	}
+
+	public void enqueue(Packets.Play payload) {
+		Job job = new Job(payload);
+		queue.add(job);
+		report(job, STATE_QUEUED, "");
+	}
+
+	/** 停止当前播放并清空队列 */
+	public void stopAll(String reason) {
+		Job job = current.get();
+		if (job != null) {
+			job.cancelled = true;
+			closeLine(job);
+		}
+		for (Job queued : queue) {
+			queued.cancelled = true;
+		}
+		queue.clear();
+		prefetched.clear();
+		mainThreadTasks.add(MusicDucker::restore);
+		Cu.LOGGER.info("停止播放：{}", reason);
+	}
+
+	// ------------------------------------------------------------ 工作线程
+
+	private void loop() {
+		while (true) {
+			Job job;
+			try {
+				job = queue.take();
+			} catch (InterruptedException e) {
+				return;
+			}
+			if (job.cancelled) continue;
+			current.set(job);
+			try {
+				Path file = resolve(job);
+				if (job.cancelled) continue;
+				job.startedAt = System.currentTimeMillis();
+				mainThreadTasks.add(MusicDucker::duck);
+				report(job, STATE_PLAYING, "");
+				prefetchNext();
+				play(file, job);
+				if (!job.cancelled) report(job, STATE_DONE, "");
+			} catch (Throwable e) {
+				if (!job.cancelled) {
+					Cu.LOGGER.warn("播放《{}》失败: {}", job.title, e.toString());
+					report(job, STATE_FAILED, friendly(e));
+				}
+			} finally {
+				closeLine(job);
+				current.compareAndSet(job, null);
+				if (queue.isEmpty()) {
+					mainThreadTasks.add(MusicDucker::restore);
+				}
+			}
+		}
+	}
+
+	private static String friendly(Throwable e) {
+		String message = e.getMessage();
+		if (message == null || message.isBlank()) message = e.getClass().getSimpleName();
+		if (message.contains("HTTP 404") || message.contains("HTTP 403")) {
+			return "歌曲无法播放（可能是 VIP / 无版权）";
+		}
+		return message.length() > 120 ? message.substring(0, 120) : message;
+	}
+
+	private void report(Job job, int state, String message) {
+		mainThreadTasks.add(() -> {
+			try {
+				if (ClientPlayNetworking.canSend(Packets.Status.TYPE)) {
+					ClientPlayNetworking.send(new Packets.Status(job.requestId, state, message));
+				}
+			} catch (Exception ignored) {
+			}
+		});
+	}
+
+	// -------------------------------------------------------------- 下载
+
+	private Path resolve(Job job) throws IOException {
+		CompletableFuture<Path> future = prefetched.remove(job.requestId);
+		if (future != null) {
+			try {
+				return future.get();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new IOException("已取消");
+			} catch (Exception e) {
+				Throwable cause = e.getCause() == null ? e : e.getCause();
+				throw new IOException(cause.getMessage() == null ? "下载失败" : cause.getMessage());
+			}
+		}
+		return download(job);
+	}
+
+	/** 当前歌开播后，顺手把下一首也下载了 */
+	private void prefetchNext() {
+		Job next = queue.peek();
+		if (next == null || next.cancelled || downloader == null) return;
+		prefetched.computeIfAbsent(next.requestId, key -> CompletableFuture.supplyAsync(() -> {
+			try {
+				return download(next);
+			} catch (IOException e) {
+				throw new CompletionException(e);
+			}
+		}, downloader));
+	}
+
+	private Path cacheDir() throws IOException {
+		Path dir = FabricLoader.getInstance().getConfigDir().resolve("cu-cache");
+		Files.createDirectories(dir);
+		return dir;
+	}
+
+	private Path download(Job job) throws IOException {
+		Path dir = cacheDir();
+		String key = sha1(job.url);
+		Path target = dir.resolve(key + ".bin");
+		if (Files.isRegularFile(target) && Files.size(target) > 2048) {
+			target.toFile().setLastModified(System.currentTimeMillis());
+			return target;
+		}
+		Path tmp = dir.resolve(key + ".part");
+		String currentUrl = job.url;
+		int timeout = config == null ? 20 : config.downloadTimeoutSeconds;
+		for (int hop = 0; hop < 6; hop++) {
+			HttpURLConnection connection = (HttpURLConnection) URI.create(currentUrl).toURL().openConnection();
+			connection.setInstanceFollowRedirects(false);
+			connection.setConnectTimeout(10_000);
+			connection.setReadTimeout(timeout * 1000);
+			connection.setRequestProperty("User-Agent", UA);
+			connection.setRequestProperty("Referer", "https://music.163.com/");
+			int status = connection.getResponseCode();
+			if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+				String location = connection.getHeaderField("Location");
+				connection.disconnect();
+				if (location == null || location.isBlank()) throw new IOException("重定向缺少地址");
+				currentUrl = URI.create(currentUrl).resolve(location).toString();
+				continue;
+			}
+			if (status != 200) {
+				connection.disconnect();
+				throw new IOException("HTTP " + status);
+			}
+			long total = 0;
+			try (InputStream in = connection.getInputStream();
+				 OutputStream out = Files.newOutputStream(tmp)) {
+				byte[] buffer = new byte[32 * 1024];
+				int n;
+				while (!job.cancelled && (n = in.read(buffer)) > 0) {
+					total += n;
+					if (total > MAX_BYTES) throw new IOException("音频文件过大");
+					out.write(buffer, 0, n);
+				}
+			} finally {
+				connection.disconnect();
+			}
+			if (job.cancelled) {
+				Files.deleteIfExists(tmp);
+				throw new IOException("已取消");
+			}
+			if (total < 2048) {
+				Files.deleteIfExists(tmp);
+				throw new IOException("音频内容为空（可能是 VIP / 无版权）");
+			}
+			Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			trimCache();
+			return target;
+		}
+		throw new IOException("重定向次数过多");
+	}
+
+	private void trimCache() {
+		try {
+			Path dir = cacheDir();
+			long limit = (long) (config == null ? 512 : config.maxCacheMb) * 1024 * 1024;
+			long total = 0;
+			List<Path> files = new ArrayList<>();
+			try (Stream<Path> stream = Files.list(dir)) {
+				for (Path path : stream.toList()) {
+					if (!Files.isRegularFile(path)) continue;
+					total += Files.size(path);
+					files.add(path);
+				}
+			}
+			if (total <= limit) return;
+			files.sort(Comparator.comparingLong(path -> path.toFile().lastModified()));
+			for (Path path : files) {
+				if (total <= limit) break;
+				long size = Files.size(path);
+				if (Files.deleteIfExists(path)) total -= size;
+			}
+		} catch (Exception ignored) {
+		}
+	}
+
+	private static String sha1(String text) {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-1").digest(text.getBytes(StandardCharsets.UTF_8));
+			StringBuilder sb = new StringBuilder();
+			for (byte b : digest) sb.append(String.format("%02x", b));
+			return sb.toString();
+		} catch (Exception e) {
+			return Integer.toHexString(text.hashCode());
+		}
+	}
+
+	// -------------------------------------------------------------- 播放
+
+	private void play(Path file, Job job) throws Exception {
+		byte[] head = new byte[4];
+		try (InputStream in = Files.newInputStream(file)) {
+			int read = in.read(head);
+			if (read < 4) throw new IOException("音频文件损坏");
+		}
+		if (isMp3(head)) {
+			playMp3(file, job);
+		} else {
+			playGeneric(file, job);
+		}
+	}
+
+	private static boolean isMp3(byte[] head) {
+		if (head[0] == 'I' && head[1] == 'D' && head[2] == '3') return true;
+		int b0 = head[0] & 0xFF;
+		int b1 = head[1] & 0xFF;
+		return b0 == 0xFF && (b1 & 0xE0) == 0xE0;
+	}
+
+	private void playMp3(Path file, Job job) throws Exception {
+		try (InputStream raw = new BufferedInputStream(Files.newInputStream(file), 128 * 1024)) {
+			Bitstream bitstream = new Bitstream(raw);
+			Decoder decoder = new Decoder();
+			SourceDataLine line = null;
+			try {
+				Header header;
+				while (!job.cancelled && (header = bitstream.readFrame()) != null) {
+					SampleBuffer samples = (SampleBuffer) decoder.decodeFrame(header, bitstream);
+					if (line == null) {
+						AudioFormat format = new AudioFormat(decoder.getOutputFrequency(), 16,
+								decoder.getOutputChannels(), true, false);
+						line = AudioSystem.getSourceDataLine(format);
+						line.open(format, 1 << 16);
+						line.start();
+						job.line = line;
+					}
+					short[] buffer = samples.getBuffer();
+					int length = samples.getBufferLength();
+					byte[] pcm = new byte[length * 2];
+					float gain = gain(job);
+					for (int i = 0; i < length; i++) {
+						int value = Math.round(buffer[i] * gain);
+						if (value > 32767) value = 32767;
+						if (value < -32768) value = -32768;
+						pcm[i * 2] = (byte) (value & 0xFF);
+						pcm[i * 2 + 1] = (byte) ((value >> 8) & 0xFF);
+					}
+					line.write(pcm, 0, pcm.length);
+					bitstream.closeFrame();
+				}
+				if (line != null && !job.cancelled) line.drain();
+			} finally {
+				try {
+					bitstream.close();
+				} catch (Exception ignored) {
+				}
+			}
+		}
+	}
+
+	private void playGeneric(Path file, Job job) throws Exception {
+		try (AudioInputStream in = AudioSystem.getAudioInputStream(file.toFile())) {
+			AudioFormat format = in.getFormat();
+			SourceDataLine line = AudioSystem.getSourceDataLine(format);
+			line.open(format, 1 << 16);
+			line.start();
+			job.line = line;
+			boolean pcm16 = format.getSampleSizeInBits() == 16 && !format.isBigEndian();
+			byte[] buffer = new byte[16 * 1024];
+			int n;
+			while (!job.cancelled && (n = in.read(buffer)) > 0) {
+				if (pcm16) applyGain(buffer, n, gain(job));
+				line.write(buffer, 0, n);
+			}
+			if (!job.cancelled) line.drain();
+		}
+	}
+
+	private static void applyGain(byte[] buffer, int length, float gain) {
+		for (int i = 0; i + 1 < length; i += 2) {
+			int value = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
+			value = Math.round(value * gain);
+			if (value > 32767) value = 32767;
+			if (value < -32768) value = -32768;
+			buffer[i] = (byte) (value & 0xFF);
+			buffer[i + 1] = (byte) ((value >> 8) & 0xFF);
+		}
+	}
+
+	/** 开场 500ms 淡入，避免爆音 */
+	private float gain(Job job) {
+		long elapsed = System.currentTimeMillis() - job.startedAt;
+		float fade = Math.min(1f, Math.max(0f, elapsed / 500f));
+		return volume * fade;
+	}
+
+	private static void closeLine(Job job) {
+		SourceDataLine line = job.line;
+		if (line == null) return;
+		job.line = null;
+		try {
+			line.stop();
+			line.flush();
+			line.close();
+		} catch (Exception ignored) {
+		}
+	}
+
+	// ---------------------------------------------------------------- Job
+
+	private static final class Job {
+		final String requestId;
+		final String url;
+		final String title;
+		final String artist;
+		final String requester;
+		final boolean broadcast;
+		volatile boolean cancelled;
+		volatile SourceDataLine line;
+		volatile long startedAt = System.currentTimeMillis();
+
+		Job(Packets.Play payload) {
+			this.requestId = payload.requestId();
+			this.url = payload.url();
+			this.title = payload.title();
+			this.artist = payload.artist();
+			this.requester = payload.requester();
+			this.broadcast = payload.broadcast();
+		}
+	}
+}

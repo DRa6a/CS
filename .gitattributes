@@ -1,0 +1,13 @@
+# 统一换行符，避免 Windows/Linux 互相污染 diff
+* text=auto eol=lf
+
+# Gradle wrapper 脚本
+/gradlew            text eol=lf
+*.bat               text eol=crlf
+*.cmd               text eol=crlf
+
+# 二进制文件
+*.jar               binary
+*.png               binary
+*.zip               binary
+*.dat               binary
