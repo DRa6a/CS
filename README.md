@@ -3,6 +3,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![AI-assisted](https://img.shields.io/badge/development-AI--assisted-blueviolet)](#关于-ai-开发)
 
+**仓库地址**：<https://github.com/DRa6a/CS>
+
+```bash
+git clone https://github.com/DRa6a/CS.git
+```
+
 > **开发方式：AI 辅助开发**
 >
 > 本项目的代码、调试与文档**主要由 AI 编程工具生成和迭代**，人类作者负责需求定义、方向决策与验收测试。
