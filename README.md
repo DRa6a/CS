@@ -209,7 +209,10 @@ git clone https://github.com/DRa6a/CS.git
 - **歌词 HUD**：单行字幕（只显示当前歌词，有官方翻译时加一行），位置/字号/透明度/翻译可配，不滚动
 - **歌词来源**：不占服务端带宽——Cu 直接从 Si 下发的音频直链里抠出网易云歌曲 id（`...?id=123.mp3`），在客户端自己拉 `/api/song/lyric`（原词 + 官方翻译）；直链没有 id 时按 歌名+歌手 搜一次，带缓存
 - **@ 补全**：聊天框输入 `@` 弹出带头像的在线玩家候选，方向键切换、Tab/回车确认、鼠标点击插入（匹配逻辑复用 MojiDrop）
-- **与 MojiDrop 共存**：两者都混入 `ChatScreen`，但注入的方法不同（MojiDrop 用 `onEdited`，Cu 用 `keyPressed` / `mouseClicked` / `extractRenderState`），不会互相覆盖。唯一重叠的是「@ 提人」这个功能本身——MojiDrop 会把候选写进原版建议槽，Cu 是自绘面板，同时开会叠出两套列表；Cu 的 `CommandSuggestionsMixin` 在自绘面板激活时压掉原版列表，保证只显示带头像的那一套（MojiDrop 的颜文字补全要求输入以空格结尾，与 `@` 状态不重叠，不受影响）
+- **与 MojiDrop 共存**：两者都混入 `ChatScreen`，但注入点错开，不会互相覆盖
+  - **@ 提人**：两边都实现了，MojiDrop 把候选写进原版建议槽、Cu 是自绘头像面板，同时开会叠出两套列表。Cu 的 `CommandSuggestionsMixin` 在自绘面板激活时压掉原版列表，只保留带头像的那一套
+  - **颜文字补全**：MojiDrop 的逻辑，正常可用。但它在 `onEdited` 里判断「文本以空格结尾」就发请求，而 Cu 插入 `@名字 ` 恰好以空格结尾——Cu 的 `ChatScreenMixin` 用 `rewriting` 标记 + `priority 500` 抢先取消这次回调，避免选完玩家名又弹出一批颜文字候选
+  - 想彻底交给 MojiDrop 管：把 `cu.json` 的 `mentionEnabled` 设为 `false`，Cu 面板不再出现，MojiDrop 的 @ 提人恢复原样
 
 
 

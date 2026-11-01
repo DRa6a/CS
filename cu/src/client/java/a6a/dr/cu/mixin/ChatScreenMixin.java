@@ -24,11 +24,27 @@ import java.util.List;
 /**
  * 聊天框 @ 补全：输入 @ 后弹出带头像的玩家候选面板，
  * 方向键切换、Tab/回车确认、鼠标点击插入。匹配逻辑复用 MojiDrop。
+ *
+ * <p>priority 500：保证 {@code onEdited} 上的注入比 MojiDrop（默认 1000）更早执行。</p>
  */
-@Mixin(ChatScreen.class)
+@Mixin(value = ChatScreen.class, priority = 500)
 public abstract class ChatScreenMixin {
 	@Shadow
 	protected EditBox input;
+
+	/**
+	 * 自己改输入框内容时，别让其它模组把这次改动当成「玩家刚敲了空格」。
+	 *
+	 * <p>MojiDrop 的颜文字补全在 onEdited 里判断「文本以空格结尾」就发一次请求，
+	 * 而 @ 提人插入后恰好以空格结尾（{@code @名字 }）。不挡住的话，
+	 * 每次选完玩家名都会立刻触发一次颜文字请求，一两秒后弹出候选列表。</p>
+	 */
+	@Inject(method = "onEdited", at = @At("HEAD"), cancellable = true)
+	private void cu$skipEditedWhileRewriting(String value, CallbackInfo ci) {
+		if (MentionState.isRewriting()) {
+			ci.cancel();
+		}
+	}
 
 	@Inject(method = "extractRenderState", at = @At("TAIL"))
 	private void cu$renderMention(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta, CallbackInfo ci) {

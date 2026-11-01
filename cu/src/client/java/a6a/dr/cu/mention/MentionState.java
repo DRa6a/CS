@@ -12,6 +12,8 @@ public final class MentionState {
 	private static boolean active;
 	private static List<String> matches = List.of();
 	private static int selected;
+	/** 程序化改写输入框期间为 true */
+	private static boolean rewriting;
 
 	private static int panelX;
 	private static int panelY;
@@ -99,8 +101,20 @@ public final class MentionState {
 		}
 		String name = matches.get(Math.max(0, Math.min(selected, matches.size() - 1)));
 		String newValue = value.substring(0, at + 1) + name + " " + value.substring(cursor);
-		input.setValue(newValue);
-		input.setCursorPosition(at + 1 + name.length() + 1);
+		// setValue 会同步回调 ChatScreen.onEdited，这里打个标记，
+		// 让别家模组（MojiDrop 的颜文字补全）别把这次程序化修改当成玩家输入
+		rewriting = true;
+		try {
+			input.setValue(newValue);
+			input.setCursorPosition(at + 1 + name.length() + 1);
+		} finally {
+			rewriting = false;
+		}
 		clear();
+	}
+
+	/** 是否正在程序化改写输入框内容 */
+	public static boolean isRewriting() {
+		return rewriting;
 	}
 }
