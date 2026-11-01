@@ -77,6 +77,9 @@ public final class AudioEngine {
 	private volatile long lastTrimAt;
 	/** 只在渲染线程读写 */
 	private int quietTicks;
+	/** 复用的输出线路：每首歌都开关一次音频设备要几十毫秒，也容易让游戏音频抖一下 */
+	private SourceDataLine sharedLine;
+	private AudioFormat sharedFormat;
 
 	private AudioEngine() {
 	}
@@ -174,7 +177,8 @@ public final class AudioEngine {
 		Job job = current.get();
 		if (job != null) {
 			job.cancelled = true;
-			closeLine(job);
+			// 把缓冲区里还没播完的残留直接丢掉，比关掉再重开设备快得多
+			flushLine();
 		}
 		for (Job queued : queue) {
 			queued.cancelled = true;
@@ -208,12 +212,13 @@ public final class AudioEngine {
 				play(file, job);
 				if (!job.cancelled) report(job, STATE_DONE, "");
 			} catch (Throwable e) {
+				// 出错了就把线路关掉，下一首重新开，避免半死状态一直被沿用
+				releaseLine();
 				if (!job.cancelled) {
 					Cu.LOGGER.warn("播放《{}》失败: {}", job.title, e.toString());
 					report(job, STATE_FAILED, friendly(e));
 				}
 			} finally {
-				closeLine(job);
 				current.compareAndSet(job, null);
 				cleanupPrefetch();
 				if (queue.isEmpty()) {
@@ -427,10 +432,7 @@ public final class AudioEngine {
 					if (line == null) {
 						AudioFormat format = new AudioFormat(decoder.getOutputFrequency(), 16,
 								decoder.getOutputChannels(), true, false);
-						line = AudioSystem.getSourceDataLine(format);
-						line.open(format, 1 << 16);
-						line.start();
-						job.line = line;
+						line = acquireLine(format);
 					}
 					short[] buffer = samples.getBuffer();
 					int length = samples.getBufferLength();
@@ -460,10 +462,7 @@ public final class AudioEngine {
 	private void playGeneric(Path file, Job job) throws Exception {
 		try (AudioInputStream in = AudioSystem.getAudioInputStream(file.toFile())) {
 			AudioFormat format = in.getFormat();
-			SourceDataLine line = AudioSystem.getSourceDataLine(format);
-			line.open(format, 1 << 16);
-			line.start();
-			job.line = line;
+			SourceDataLine line = acquireLine(format);
 			boolean pcm16 = format.getSampleSizeInBits() == 16 && !format.isBigEndian();
 			byte[] buffer = new byte[16 * 1024];
 			int n;
@@ -493,10 +492,43 @@ public final class AudioEngine {
 		return volume * fade;
 	}
 
-	private static void closeLine(Job job) {
-		SourceDataLine line = job.line;
+	/**
+	 * 拿一条输出线路。格式没变就复用上一条——每次 getSourceDataLine + open + close
+	 * 在 Windows 上要几十毫秒，反复申请/释放音频设备也容易让游戏那边抖一下。
+	 */
+	private synchronized SourceDataLine acquireLine(AudioFormat format) throws Exception {
+		if (sharedLine != null && sharedFormat != null && sharedFormat.matches(format)) {
+			return sharedLine;
+		}
+		closeShared();
+		SourceDataLine line = AudioSystem.getSourceDataLine(format);
+		line.open(format, 1 << 16);
+		line.start();
+		sharedLine = line;
+		sharedFormat = format;
+		return line;
+	}
+
+	/** 丢掉缓冲区里还没播完的声音（停止播放时用），线路本身留着复用 */
+	private void flushLine() {
+		SourceDataLine line = sharedLine;
 		if (line == null) return;
-		job.line = null;
+		try {
+			line.flush();
+		} catch (Exception ignored) {
+		}
+	}
+
+	/** 关闭并丢弃复用的线路（播放出错时用，下一首会重新开） */
+	private synchronized void releaseLine() {
+		closeShared();
+	}
+
+	private void closeShared() {
+		SourceDataLine line = sharedLine;
+		sharedLine = null;
+		sharedFormat = null;
+		if (line == null) return;
 		try {
 			line.stop();
 			line.flush();
@@ -515,7 +547,6 @@ public final class AudioEngine {
 		final String requester;
 		final boolean broadcast;
 		volatile boolean cancelled;
-		volatile SourceDataLine line;
 		volatile long startedAt = 0L;
 
 		Job(Packets.Play payload) {

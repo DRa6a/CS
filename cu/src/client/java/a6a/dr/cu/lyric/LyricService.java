@@ -11,9 +11,10 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -44,8 +45,17 @@ public final class LyricService {
 		thread.setPriority(Thread.MIN_PRIORITY);
 		return thread;
 	});
-	/** 键为歌曲 id（有则用 id），值为解析结果（可能为 empty 表示确实没歌词） */
-	private final Map<String, Optional<LyricRecord>> cache = new ConcurrentHashMap<>();
+	/** 歌词缓存上限：一首歌的歌词几十 KB，无限攒下去内存会一直涨 */
+	private static final int CACHE_LIMIT = 64;
+
+	/** 键为歌曲 id（有则用 id），值为解析结果（可能为 empty 表示确实没歌词）；LRU，最多 CACHE_LIMIT 条 */
+	private final Map<String, Optional<LyricRecord>> cache = Collections.synchronizedMap(
+			new LinkedHashMap<>(CACHE_LIMIT, 0.75f, true) {
+				@Override
+				protected boolean removeEldestEntry(Map.Entry<String, Optional<LyricRecord>> eldest) {
+					return size() > CACHE_LIMIT;
+				}
+			});
 
 	private volatile String lastRequestId;
 	private volatile LyricRecord current;
@@ -77,6 +87,9 @@ public final class LyricService {
 		}
 
 		pool.submit(() -> {
+			// 已经切到别的歌了就别白跑一趟：快速连切时单线程队列会积压一串没人要的请求，
+			// 后面的歌还得排在它们后面等
+			if (!requestId.equals(lastRequestId)) return;
 			LyricRecord record = null;
 			try {
 				record = load(id, title, artist);

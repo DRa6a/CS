@@ -287,8 +287,9 @@ git clone https://github.com/DRa6a/CS.git
 - 前端边打字边搜只认最后一次响应，慢的旧请求回来直接丢弃
 - 网页视觉层的 GPU 开销：极光光斑原来带 `scale()` 动画，带 `filter: blur()` 的元素一缩放就要每帧重算一次 72px 高斯模糊；改成纯 `translate3d` 后合成器直接搬运现成纹理。`backdrop-filter` 从 26px 降到 14px，`background-attachment: fixed` 的整页背景重绘改成固定定位的 `.aurora` 层（`contain: paint`），页面滚动的重绘面积从整页降到零
 - 前端自带帧率探测：开页面后量 1.2 秒，平均低于 45fps 就给 `<html>` 挂 `perf-lite`，自动关掉毛玻璃和光斑动画（触屏设备与 `prefers-reduced-motion` 直接走这一档）
-
-- 客户端每帧路径：歌词 HUD 只在「换行」时才构建 `Component` 并量文字宽度，缓存命中时每帧只剩两次文本绘制；`AudioEngine.tick()` 只轮询一个空队列——整条渲染线程路径没有 I/O、没有锁等待
+- 客户端每帧路径：歌词 HUD 只在「换行」时才构建 `FormattedCharSequence` 并量文字宽度，绘制时走 `text()` 而不是 `centeredText()`（后者每次调用都会重新取 visual order、重新测量宽度，等于每帧白算两遍）；缓存命中时每帧只剩两次纯文本绘制 + 一次 `fill`。`AudioEngine.tick()` 只轮询一个空队列——整条渲染线程路径没有 I/O、没有锁等待
+- 音频输出线路跨歌曲复用：`SourceDataLine` 原来每首歌 `open`/`close` 一次，Windows 上要几十毫秒，还会反复申请/释放音频设备；现在格式不变就沿用同一条，停止播放只 `flush()` 丢弃缓冲，切歌更快也更不容易让游戏音频抖一下
+- 歌词缓存改成 LRU，上限 64 首（原来是无上限 `ConcurrentHashMap`，长时间挂机听过几百首后内存只涨不降）；快速连切歌时，排队中的旧请求会在真正发起网络请求前直接返回，不再让后面的歌排在没人要的请求后面
 
 **运行时占用（常驻开销）**
 - 网页线程池核心线程也允许 60 秒回收，没人访问网页时线程数会归零，不白占栈内存
