@@ -19,7 +19,7 @@
 MIT License，见仓库根目录的 [LICENSE](../LICENSE)。
 
 ```
-Copyright (c) 2026 a6a
+Copyright (c) 2026 DRa6a
 ```
 
 > 项目脚手架来自 Fabric 官方模板（CC0），在此基础上做了大量修改。

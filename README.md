@@ -366,7 +366,7 @@ cd cu && ./gradlew build     # cu/build/libs/cu-1.0.0.jar
 **MIT License** —— 完整条款见 [LICENSE](LICENSE)。
 
 ```
-Copyright (c) 2026 a6a
+Copyright (c) 2026 DRa6a
 ```
 
 可以自由使用、修改、分发，包括商用；保留版权声明和许可声明即可，作者不为使用后果负责。
