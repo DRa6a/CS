@@ -36,7 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -55,6 +55,8 @@ public final class AudioEngine {
 	public static final int STATE_PLAYING = 1;
 	public static final int STATE_DONE = 2;
 	public static final int STATE_FAILED = 3;
+	/** 没播完就被停掉 / 被新歌打断 */
+	public static final int STATE_SKIPPED = 4;
 
 	private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 			+ "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -65,7 +67,7 @@ public final class AudioEngine {
 
 	private static final AudioEngine INSTANCE = new AudioEngine();
 
-	private final LinkedBlockingQueue<Job> queue = new LinkedBlockingQueue<>();
+	private final LinkedBlockingDeque<Job> queue = new LinkedBlockingDeque<>();
 	private final Map<String, CompletableFuture<Path>> prefetched = new ConcurrentHashMap<>();
 	private final ConcurrentLinkedQueue<Runnable> mainThreadTasks = new ConcurrentLinkedQueue<>();
 	private final AtomicReference<Job> current = new AtomicReference<>();
@@ -168,26 +170,56 @@ public final class AudioEngine {
 
 	public void enqueue(Packets.Play payload) {
 		Job job = new Job(payload);
-		queue.add(job);
+		queue.addLast(job);
 		report(job, STATE_QUEUED, "");
 	}
 
-	/** 停止当前播放并清空队列 */
+	/**
+	 * 停止当前播放并清空队列。
+	 *
+	 * <p>没播完的那些会向服务端报 {@link #STATE_SKIPPED}——否则网页上会一直停在
+	 * 「播放中」，看起来像卡住了。</p>
+	 */
 	public void stopAll(String reason) {
 		Job job = current.get();
 		if (job != null) {
 			job.cancelled = true;
 			// 把缓冲区里还没播完的残留直接丢掉，比关掉再重开设备快得多
 			flushLine();
+			report(job, STATE_SKIPPED, reason);
 		}
+		clearQueue(reason);
+		mainThreadTasks.add(MusicDucker::restore);
+		Cu.LOGGER.info("停止播放：{}", reason);
+	}
+
+	/**
+	 * 立刻换歌：停掉当前这首，把新的插到队首（别人已经排的歌不丢，等这首放完接着放）。
+	 *
+	 * <p>「新歌处理 = 立即切歌」走这条路径。不恢复背景音乐——新歌马上就开播，
+	 * 中间闪一下反而难听。</p>
+	 */
+	public void replaceWith(Packets.Play payload) {
+		Job job = current.get();
+		if (job != null) {
+			job.cancelled = true;
+			flushLine();
+			report(job, STATE_SKIPPED, "被新歌打断");
+		}
+		Job next = new Job(payload);
+		queue.addFirst(next);
+		report(next, STATE_QUEUED, "");
+	}
+
+	/** 清空排队中的歌，并给每一首一个明确结局 */
+	private void clearQueue(String reason) {
 		for (Job queued : queue) {
 			queued.cancelled = true;
+			report(queued, STATE_SKIPPED, reason);
 		}
 		queue.clear();
 		prefetched.values().forEach(future -> future.cancel(true));
 		prefetched.clear();
-		mainThreadTasks.add(MusicDucker::restore);
-		Cu.LOGGER.info("停止播放：{}", reason);
 	}
 
 	// ------------------------------------------------------------ 工作线程

@@ -848,6 +848,12 @@ input[type="search"]::-webkit-search-cancel-button {
 	border-color: rgba(255, 255, 255, .1);
 }
 
+.badge.SKIPPED {
+	color: rgba(255, 255, 255, .42);
+	background: rgba(255, 255, 255, .04);
+	border-color: rgba(255, 255, 255, .08);
+}
+
 .badge.FAILED {
 	color: #ffb4c4;
 	background: rgba(255, 120, 150, .14);

@@ -763,6 +763,8 @@ public final class WebServer {
 			item.addProperty("artist", entry.artist);
 			item.addProperty("state", entry.state);
 			item.addProperty("message", entry.message);
+			item.addProperty("playing", entry.playing);
+			item.addProperty("listeners", entry.listeners.size());
 			item.addProperty("broadcast", entry.broadcast);
 			item.addProperty("requestedAt", entry.requestedAt);
 			item.addProperty("mine", entry.player.equalsIgnoreCase(session.name()));
@@ -903,7 +905,7 @@ public final class WebServer {
 						  String artist, String requester, boolean broadcast) {
 		MinecraftServer server = SiCore.server;
 		if (server == null) {
-			SiCore.requests().update(requestId, RequestLog.FAILED, "服务器未就绪");
+			SiCore.requests().finish(requestId, RequestLog.FAILED, "服务器未就绪");
 			return;
 		}
 		server.executeIfPossible(() -> {
@@ -917,17 +919,17 @@ public final class WebServer {
 					}
 				}
 				if (sent == 0) {
-					SiCore.requests().update(requestId, RequestLog.FAILED, "没有可播放的客户端");
+					SiCore.requests().finish(requestId, RequestLog.FAILED, "没有可播放的客户端");
 				}
 				return;
 			}
 			ServerPlayer target = server.getPlayerList().getPlayer(targetUuid);
 			if (target == null) {
-				SiCore.requests().update(requestId, RequestLog.FAILED, "玩家已离线");
+				SiCore.requests().finish(requestId, RequestLog.FAILED, "玩家已离线");
 				return;
 			}
 			if (!SiNetworking.canPlay(target)) {
-				SiCore.requests().update(requestId, RequestLog.FAILED, "客户端未安装 Cu 模组");
+				SiCore.requests().finish(requestId, RequestLog.FAILED, "客户端未安装 Cu 模组");
 				return;
 			}
 			SiNetworking.sendPlay(target, requestId, url, title, artist, requester,

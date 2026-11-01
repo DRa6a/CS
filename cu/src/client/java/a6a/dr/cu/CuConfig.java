@@ -37,6 +37,21 @@ public final class CuConfig {
 	/** true=有人点歌直接播放/切歌；false=弹窗手动同意 */
 	public boolean autoAccept = true;
 
+	/** 新歌到来时的处理方式取值 */
+	public static final String NEW_SONG_QUEUE = "queue";
+	public static final String NEW_SONG_CUT = "cut";
+	public static final List<String> NEW_SONG_MODES = List.of(NEW_SONG_QUEUE, NEW_SONG_CUT);
+
+	/**
+	 * 正在播一首时又有人点歌怎么办：
+	 * <ul>
+	 *   <li>{@code queue}：播完本首再放（排队）</li>
+	 *   <li>{@code cut}：立刻停掉当前并清空队列，直接播新的（插播优先）</li>
+	 * </ul>
+	 * 只在 {@code autoAccept = true} 时生效；手动同意模式由确认框里的按钮决定。
+	 */
+	public String onNewSong = NEW_SONG_QUEUE;
+
 	/** 是否显示歌词 HUD */
 	public boolean lyricsEnabled = true;
 	/** 是否显示歌词翻译（网易云官方翻译） */
@@ -77,6 +92,7 @@ public final class CuConfig {
 		if (maxCacheMb < 32) maxCacheMb = 512;
 		if (downloadTimeoutSeconds < 5) downloadTimeoutSeconds = 20;
 		if (lyricsPosition == null || !POSITIONS.contains(lyricsPosition)) lyricsPosition = POS_BOTTOM;
+		if (onNewSong == null || !NEW_SONG_MODES.contains(onNewSong)) onNewSong = NEW_SONG_QUEUE;
 		lyricsScale = Math.max(0.75f, Math.min(2.0f, lyricsScale));
 		lyricsOpacity = Math.max(0.2f, Math.min(1.0f, lyricsOpacity));
 	}

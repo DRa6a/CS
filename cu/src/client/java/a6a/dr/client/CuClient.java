@@ -30,7 +30,13 @@ public class CuClient implements ClientModInitializer {
 		// 收到播放请求
 		ClientPlayNetworking.registerGlobalReceiver(Packets.Play.TYPE, (payload, context) -> {
 			if (config.autoAccept) {
-				AudioEngine.get().enqueue(payload);
+				if (CuConfig.NEW_SONG_CUT.equals(config.onNewSong)) {
+					// 插播优先：停掉当前这首（会报「已切歌」），直接播新的
+					AudioEngine.get().replaceWith(payload);
+				} else {
+					// 播完本首再放：进队列
+					AudioEngine.get().enqueue(payload);
+				}
 				if (config.chatMessages) {
 					context.client().execute(() -> chatPlayNotice(payload));
 				}

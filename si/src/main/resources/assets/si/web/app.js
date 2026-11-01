@@ -593,6 +593,7 @@
 		QUEUED: '排队中',
 		PLAYING: '播放中',
 		DONE: '已播完',
+		SKIPPED: '已切歌',
 		FAILED: '失败'
 	};
 
@@ -653,7 +654,12 @@
 
 			const badge = document.createElement('span');
 			badge.className = 'badge ' + entry.state;
-			badge.textContent = STATE_TEXT[entry.state] || entry.state;
+			// 全服播放时可能多个人同时在放，显示人数
+			let badgeText = STATE_TEXT[entry.state] || entry.state;
+			if (entry.state === 'PLAYING' && entry.playing > 1) {
+				badgeText += ' ' + entry.playing;
+			}
+			badge.textContent = badgeText;
 			li.appendChild(badge);
 
 			list.appendChild(li);

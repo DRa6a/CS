@@ -185,6 +185,7 @@ git clone https://github.com/DRa6a/CS.git
   "chatMessages": true,
   "autoPlayNext": true,
   "autoAccept": true,
+  "onNewSong": "queue",
   "lyricsEnabled": true,
   "lyricsShowTranslation": true,
   "lyricsPosition": "bottom",
@@ -196,6 +197,10 @@ git clone https://github.com/DRa6a/CS.git
 ```
 
 - `autoAccept`：`true` 有人点歌直接播放/切歌；`false` 弹窗手动选「播放 / 切歌 / 拒绝」（可排队，一次一个）
+- `onNewSong`：**正在播的时候又有人点歌怎么办**（只在 `autoAccept = true` 时生效）
+  - `queue`（默认）：播完本首再放，新的进队列，网页上显示「排队中」
+  - `cut`：立刻停掉当前这首，把新歌插到队首（别人已经排的歌不丢，这首放完接着放）——被打断的那首在网页上标「已切歌」
+  - 手动同意模式下由确认框里的「播放 / 切歌」按钮决定，这个配置不参与
 - `lyricsEnabled` / `lyricsShowTranslation`：歌词 HUD 与网易云官方翻译开关
 - `lyricsPosition`：`bottom` / `center` / `top`；`lyricsScale` 字号 0.75~2.0；`lyricsOpacity` 透明度 0.2~1.0
 - `lyricsShowBackground`：歌词半透明底（单行当前歌词，有翻译时两行，不滚动）
@@ -206,6 +211,8 @@ git clone https://github.com/DRa6a/CS.git
 客户端（Cu）的配置页通过 **ModMenu** 打开（模组列表里点「配置」）；没装 ModMenu 不影响播放。
 
 - **点歌模式**：自动播放/切歌 或 手动同意（弹框三选一：播放 / 切歌 / 拒绝）
+- **新歌处理**：正在播的时候又有人点歌，可选「播完再放」或「立即切歌」（见 `onNewSong`）
+- **状态口径**：网页上的「播放中 / 排队中 / 已播完 / 已切歌」由各客户端回报聚合而成——全服播放时按接收者分别记状态，有人在播就是播放中（多人时显示人数），没人播但还有人排队就是排队中，全部有结局才算播完。被打断的歌会报「已切歌」，不会一直挂在「播放中」
 - **歌词 HUD**：单行字幕（只显示当前歌词，有官方翻译时加一行），位置/字号/透明度/翻译可配，不滚动
 - **歌词来源**：不占服务端带宽——Cu 直接从 Si 下发的音频直链里抠出网易云歌曲 id（`...?id=123.mp3`），在客户端自己拉 `/api/song/lyric`（原词 + 官方翻译）；直链没有 id 时按 歌名+歌手 搜一次，带缓存
 - **@ 补全**：聊天框输入 `@` 弹出带头像的在线玩家候选，方向键切换、Tab/回车确认、鼠标点击插入（匹配逻辑复用 MojiDrop）

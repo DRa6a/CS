@@ -67,8 +67,8 @@ public final class PlayRequestScreen extends Screen {
 	}
 
 	private void skip() {
-		AudioEngine.get().stopAll("切歌");
-		AudioEngine.get().enqueue(payload);
+		// replaceWith 会给被打断的那首报「已切歌」，网页上不会一直挂在「播放中」
+		AudioEngine.get().replaceWith(payload);
 		finish();
 	}
 

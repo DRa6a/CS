@@ -25,17 +25,19 @@ public final class SiNetworking {
 		PayloadTypeRegistry.serverboundPlay().register(Packets.Status.TYPE, Packets.Status.CODEC);
 
 		ServerPlayNetworking.registerGlobalReceiver(Packets.Status.TYPE,
-				(payload, context) -> handleStatus(payload));
+				(payload, context) -> handleStatus(context.player(), payload));
 	}
 
-	private static void handleStatus(Packets.Status payload) {
+	private static void handleStatus(ServerPlayer player, Packets.Status payload) {
 		String state = switch (payload.state()) {
 			case 1 -> RequestLog.PLAYING;
 			case 2 -> RequestLog.DONE;
 			case 3 -> RequestLog.FAILED;
+			case 4 -> RequestLog.SKIPPED;
 			default -> RequestLog.QUEUED;
 		};
-		SiCore.requests().update(payload.requestId(), state, payload.message());
+		// 带上是谁报的：全服播放时同一个请求会有多个客户端各自回报
+		SiCore.requests().update(payload.requestId(), player == null ? null : player.getUUID(), state, payload.message());
 		if (RequestLog.FAILED.equals(state)) {
 			Si.LOGGER.info("点歌 {} 播放失败：{}", payload.requestId(), payload.message());
 		}

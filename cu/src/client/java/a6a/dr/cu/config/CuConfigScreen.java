@@ -41,6 +41,9 @@ public final class CuConfigScreen extends Screen {
 		addToggle(leftX, y, COL_W, "点歌模式", cfg.autoAccept,
 				"自动播放/切歌", "手动同意", value -> cfg.autoAccept = value);
 		y += ROW;
+		addCycle(leftX, y, COL_W, "新歌处理", CuConfig.NEW_SONG_MODES.toArray(new String[0]),
+				cfg.onNewSong, this::newSongLabel, value -> cfg.onNewSong = value);
+		y += ROW;
 		addToggle(leftX, y, COL_W, "歌词显示", cfg.lyricsEnabled, "开", "关",
 				value -> cfg.lyricsEnabled = value);
 		y += ROW;
@@ -98,6 +101,10 @@ public final class CuConfigScreen extends Screen {
 			case CuConfig.POS_CENTER -> "居中";
 			default -> "底部";
 		};
+	}
+
+	private String newSongLabel(String mode) {
+		return CuConfig.NEW_SONG_CUT.equals(mode) ? "立即切歌" : "播完再放";
 	}
 
 	private void addToggle(int x, int y, int w, String name, boolean value,
