@@ -3,21 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0b10">
+<meta name="theme-color" content="#06070d">
 <title>点歌台</title>
-<link rel="stylesheet" href="/app.css?v=20261031e">
+<link rel="stylesheet" href="/app.css?v=20261102a">
 </head>
 <body>
-<div class="app">
 
-	<header class="topbar">
+<!-- 液态极光背景 -->
+<div class="aurora" aria-hidden="true">
+	<span class="blob b1"></span>
+	<span class="blob b2"></span>
+	<span class="blob b3"></span>
+	<span class="blob b4"></span>
+</div>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="shell">
+
+	<header class="topbar glass">
 		<div class="brand">
-			<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-				<path d="M9 18.5a3 3 0 1 1-2-2.83V6.2l11-2.2v9.6a3 3 0 1 1-2-2.83V7.6L9 9.2z"
-					fill="currentColor"/>
-			</svg>
-			<span>点歌台</span>
+			<span class="brand-mark">
+				<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+					<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
+					<circle cx="12" cy="12" r="2.4" fill="currentColor"/>
+					<path d="M12 6.6a5.4 5.4 0 0 1 5.4 5.4" fill="none" stroke="currentColor"
+						stroke-width="1.6" stroke-linecap="round" opacity=".55"/>
+				</svg>
+			</span>
+			<span class="brand-text">
+				<strong id="serverTitle">我的世界服务器</strong>
+				<small>点歌台</small>
+			</span>
 		</div>
+
 		<div class="topbar-right">
 			<span class="pill" id="onlineBadge">在线 0</span>
 			<div class="user" id="userBox" hidden>
@@ -25,15 +43,15 @@
 				<span id="userName" class="uname"></span>
 				<button id="settingsBtn" class="icon-btn" title="账号设置" aria-label="账号设置">
 					<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-						<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
-						<path d="M12 3.5v2M12 18.5v2M4.7 7.8l1.7 1M17.6 15.2l1.7 1M4.7 16.2l1.7-1M17.6 8.8l1.7-1"
-							stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+						<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+						<path d="M12 3.6v2.2M12 18.2v2.2M4.8 7.9l1.9 1.1M17.3 15l1.9 1.1M4.8 16.1l1.9-1.1M17.3 9l1.9-1.1"
+							stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
 					</svg>
 				</button>
 				<button id="logoutBtn" class="icon-btn" title="退出登录" aria-label="退出登录">
 					<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-						<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3"
-							fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+						<path d="M15 4.5h3a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-3M10.5 16.5 15 12l-4.5-4.5M15 12H4"
+							fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
 							stroke-linejoin="round"/>
 					</svg>
 				</button>
@@ -42,11 +60,11 @@
 	</header>
 
 	<!-- ============ 登录 ============ -->
-	<section class="auth" id="authView">
-		<div class="card auth-card">
+	<section class="view auth" id="authView">
+		<div class="glass card auth-card">
 			<div class="auth-head">
 				<div class="disc"><span></span></div>
-				<h1 id="serverTitle">我的世界服务器</h1>
+				<h1>点歌台</h1>
 				<p class="sub" id="serverSub">登录后即可为游戏里的玩家点歌</p>
 			</div>
 
@@ -61,134 +79,188 @@
 					<input id="loginPass" name="password" type="password" placeholder="进服时在聊天框设置的密码"
 						autocomplete="current-password" required>
 				</label>
-				<button class="btn primary" type="submit">登录</button>
+				<button class="btn primary block" type="submit">进入</button>
 				<p class="hint">还没设置密码？进服后按聊天栏提示，直接在聊天框输入即可。</p>
 			</form>
 		</div>
 	</section>
 
 	<!-- ============ 主界面 ============ -->
-	<section class="main" id="mainView" hidden>
-		<div class="hero card">
-			<div class="hero-title">想听点什么？</div>
-			<div class="searchbar">
-				<svg class="s-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-					<circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
-					<path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-				</svg>
-				<input id="searchInput" type="search" placeholder="搜索网易云歌曲、歌手…"
-					autocomplete="off" enterkeyhint="search">
-				<button id="searchBtn" class="btn ghost small">搜索</button>
-			</div>
-			<div class="hero-row">
-				<label class="target">
-					<span>点给</span>
+	<section class="view main" id="mainView" hidden>
+
+		<div class="glass targetbar">
+			<div class="target-left">
+				<span class="label">对象</span>
+				<label class="select-wrap">
 					<select id="targetSelect"></select>
+					<svg class="chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+						<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"
+							stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
 				</label>
-				<button id="directBtn" class="btn link">用直链点歌</button>
 			</div>
-			<div class="direct" id="directPanel" hidden>
-				<input id="directUrl" type="url" placeholder="https://…/song.mp3 音频直链">
-				<input id="directTitle" type="text" placeholder="歌曲名（可选）">
-				<button id="directSend" class="btn primary small">点这首</button>
+			<p class="target-hint">点歌和发消息都会发给这个对象</p>
+		</div>
+
+		<div class="grid">
+			<div class="col">
+
+				<section class="glass card hero">
+					<div class="card-head">
+						<h2>想听点什么</h2>
+						<button id="directBtn" class="btn link small">用直链点歌</button>
+					</div>
+
+					<div class="searchbar">
+						<svg class="s-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+							<circle cx="11" cy="11" r="6.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+							<path d="m16 16 4.4 4.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+						</svg>
+						<input id="searchInput" type="search" placeholder="搜索歌曲、歌手…"
+							autocomplete="off" enterkeyhint="search">
+						<button id="searchBtn" class="btn primary small">搜索</button>
+					</div>
+
+					<div class="direct" id="directPanel" hidden>
+						<input id="directUrl" type="url" placeholder="https://…/song.mp3 音频直链">
+						<input id="directTitle" type="text" placeholder="歌曲名（可选）">
+						<button id="directSend" class="btn ghost small">点这首</button>
+					</div>
+				</section>
+
+				<button class="netease-tip glass" id="neteaseTip" hidden>
+					<span class="dot"></span>
+					<span id="neteaseTipText">未绑定网易云 · VIP 歌曲无法播放，点此绑定</span>
+				</button>
+
+				<section class="glass card list-card">
+					<div class="card-head" id="resultHead" hidden>
+						<h3>搜索结果</h3>
+						<button id="clearSearch" class="btn link small">清空</button>
+					</div>
+					<ul class="song-list" id="songList"></ul>
+				</section>
 			</div>
-		</div>
 
-		<button class="netease-tip" id="neteaseTip" hidden>
-			<span class="dot"></span>
-			<span id="neteaseTipText">未绑定网易云 · VIP 歌曲无法播放，点此绑定</span>
-		</button>
+			<aside class="col side">
 
-		<div class="list-head" id="resultHead" hidden>
-			<span>搜索结果</span>
-			<button id="clearSearch" class="btn link small">清空</button>
-		</div>
-		<ul class="song-list" id="songList"></ul>
+				<section class="glass card composer">
+					<div class="card-head">
+						<h3>发条消息</h3>
+						<span class="muted" id="msgHint"></span>
+					</div>
+					<textarea id="msgInput" class="msg-input" maxlength="120" rows="3"
+						placeholder="说点什么，会出现在对方的聊天栏里…"></textarea>
+					<div class="composer-foot">
+						<span class="counter" id="msgCount">0 / 120</span>
+						<button id="msgSend" class="btn primary small">发送</button>
+					</div>
+				</section>
 
-		<div class="list-head">
-			<span>最近点歌</span>
-			<span class="muted" id="entriesHint"></span>
+				<section class="glass card list-card chat-card">
+					<div class="card-head">
+						<h3>游戏内对话</h3>
+						<span class="muted" id="chatHint"></span>
+					</div>
+					<ul class="chat-list" id="chatList"></ul>
+				</section>
+
+				<section class="glass card list-card">
+					<div class="card-head">
+						<h3>最近点歌</h3>
+						<span class="muted" id="entriesHint"></span>
+					</div>
+					<ul class="entry-list" id="entryList"></ul>
+				</section>
+			</aside>
 		</div>
-		<ul class="entry-list" id="entryList"></ul>
 
 		<p class="footer-hint">
 			游戏内可用 <code>/si volume 0-100</code> 调音量，<code>/si stop</code> 停止播放。
 		</p>
 	</section>
+</div>
 
-	<!-- ============ 账号设置 ============ -->
-	<div class="modal" id="settingsModal" hidden>
-		<div class="card modal-card">
+<!-- ============ 账号设置 ============ -->
+<div class="modal" id="settingsModal" hidden>
+	<div class="glass card modal-card">
+		<div class="modal-head">
 			<h2>账号设置</h2>
-			<p class="sub">密码改完立即生效，下次登录用新密码。</p>
-			<form id="passwordForm" class="form">
-				<label class="field">
-					<span>原密码</span>
-					<input id="oldPass" type="password" required autocomplete="current-password">
-				</label>
-				<label class="field">
-					<span>新密码</span>
-					<input id="newPass" type="password" minlength="6" required autocomplete="new-password">
-				</label>
-				<label class="field">
-					<span>确认新密码</span>
-					<input id="newPass2" type="password" minlength="6" required autocomplete="new-password">
-				</label>
-				<div class="modal-actions">
-					<button type="submit" class="btn primary">保存密码</button>
-				</div>
-			</form>
+			<button type="button" class="icon-btn" id="closeSettings" aria-label="关闭">
+				<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+					<path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.9"
+						stroke-linecap="round"/>
+				</svg>
+			</button>
+		</div>
+		<p class="sub">密码改完立即生效，下次登录用新密码。</p>
 
-			<div class="divider"></div>
-
-			<h3>网易云账号</h3>
-			<p class="sub" id="neteaseState">未绑定 · 绑定后可以播放 VIP 歌曲</p>
-
-			<div class="qr" id="qrBox">
-				<img id="qrImage" class="qr-img" alt="网易云扫码登录">
-				<p class="qr-hint" id="qrHint">打开网易云 App → 扫一扫</p>
-				<button type="button" id="qrRefresh" class="btn ghost small" hidden>刷新二维码</button>
-			</div>
-
-			<form id="neteaseForm" class="form" hidden>
-				<label class="field">
-					<span>手机号</span>
-					<input id="nmPhone" type="tel" inputmode="numeric" placeholder="网易云手机号" autocomplete="off">
-				</label>
-				<label class="field">
-					<span>密码</span>
-					<input id="nmPass" type="password" placeholder="网易云密码" autocomplete="off">
-				</label>
-				<div class="modal-actions">
-					<button type="submit" class="btn primary">登录网易云</button>
-				</div>
-			</form>
-
-			<div class="form" id="cookieBox" hidden>
-				<label class="field">
-					<span>MUSIC_U（F12 → Network → 任意请求的 Cookie 请求头里复制）</span>
-					<input id="nmCookie" type="text" placeholder="MUSIC_U=...">
-				</label>
-				<div class="modal-actions">
-					<button type="button" id="cookieSave" class="btn primary">保存 Cookie</button>
-				</div>
-			</div>
-
-			<div class="modal-actions mode-row">
-				<button type="button" id="modeQr" class="btn link small" hidden>用扫码</button>
-				<button type="button" id="modePhone" class="btn link small">用手机号</button>
-				<button type="button" id="modeCookie" class="btn link small">用 Cookie</button>
-			</div>
-
+		<form id="passwordForm" class="form">
+			<label class="field">
+				<span>原密码</span>
+				<input id="oldPass" type="password" required autocomplete="current-password">
+			</label>
+			<label class="field">
+				<span>新密码</span>
+				<input id="newPass" type="password" minlength="6" required autocomplete="new-password">
+			</label>
+			<label class="field">
+				<span>确认新密码</span>
+				<input id="newPass2" type="password" minlength="6" required autocomplete="new-password">
+			</label>
 			<div class="modal-actions">
-				<button type="button" id="neteaseUnbind" class="btn ghost" hidden>解除绑定</button>
-				<button type="button" id="closeSettings" class="btn ghost">关闭</button>
+				<button type="submit" class="btn primary">保存密码</button>
+			</div>
+		</form>
+
+		<div class="divider"></div>
+
+		<h3>网易云账号</h3>
+		<p class="sub" id="neteaseState">未绑定 · 绑定后可以播放 VIP 歌曲</p>
+
+		<div class="qr" id="qrBox">
+			<img id="qrImage" class="qr-img" alt="网易云扫码登录">
+			<p class="qr-hint" id="qrHint">打开网易云 App → 扫一扫</p>
+			<button type="button" id="qrRefresh" class="btn ghost small" hidden>刷新二维码</button>
+		</div>
+
+		<form id="neteaseForm" class="form" hidden>
+			<label class="field">
+				<span>手机号</span>
+				<input id="nmPhone" type="tel" inputmode="numeric" placeholder="网易云手机号" autocomplete="off">
+			</label>
+			<label class="field">
+				<span>密码</span>
+				<input id="nmPass" type="password" placeholder="网易云密码" autocomplete="off">
+			</label>
+			<div class="modal-actions">
+				<button type="submit" class="btn primary">登录网易云</button>
+			</div>
+		</form>
+
+		<div class="form" id="cookieBox" hidden>
+			<label class="field">
+				<span>MUSIC_U（F12 → Network → 任意请求的 Cookie 请求头里复制）</span>
+				<input id="nmCookie" type="text" placeholder="MUSIC_U=...">
+			</label>
+			<div class="modal-actions">
+				<button type="button" id="cookieSave" class="btn primary">保存 Cookie</button>
 			</div>
 		</div>
-	</div>
 
-	<div class="toast" id="toast"></div>
+		<div class="modal-actions mode-row">
+			<button type="button" id="modeQr" class="btn link small" hidden>用扫码</button>
+			<button type="button" id="modePhone" class="btn link small">用手机号</button>
+			<button type="button" id="modeCookie" class="btn link small">用 Cookie</button>
+		</div>
+
+		<div class="modal-actions">
+			<button type="button" id="neteaseUnbind" class="btn ghost" hidden>解除绑定</button>
+		</div>
+	</div>
 </div>
-<script src="/app.js?v=20261031e"></script>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js?v=20261102a"></script>
 </body>
 </html>

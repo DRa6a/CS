@@ -5,6 +5,7 @@ import a6a.dr.si.SiConfig;
 import a6a.dr.si.SiCore;
 import a6a.dr.si.auth.AccountStore;
 import a6a.dr.si.auth.SessionStore;
+import a6a.dr.si.message.ChatService;
 import a6a.dr.si.music.FallbackSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
@@ -20,6 +21,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -38,7 +42,12 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.CRC32;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * 内嵌 HTTP 服务：静态页面 + JSON API。
@@ -63,7 +72,11 @@ public final class WebServer {
 	private final HttpServer http;
 	private final ExecutorService pool;
 	private final Map<String, byte[]> assets = new ConcurrentHashMap<>();
+	/** 预压好的 gzip 版本，省得每次请求现压 */
+	private final Map<String, byte[]> gzipped = new ConcurrentHashMap<>();
+	private final Map<String, String> etags = new ConcurrentHashMap<>();
 	private final Map<String, Long> cooldowns = new ConcurrentHashMap<>();
+	private final Map<String, Long> messageCooldowns = new ConcurrentHashMap<>();
 	private final Map<String, Deque<Long>> loginAttempts = new ConcurrentHashMap<>();
 	private final Map<String, QrEntry> qrSessions = new ConcurrentHashMap<>();
 
@@ -75,13 +88,32 @@ public final class WebServer {
 		loadAssets();
 		InetSocketAddress address = new InetSocketAddress(InetAddress.getByName(config.bindAddress), config.port);
 		this.http = HttpServer.create(address, 128);
-		this.pool = Executors.newFixedThreadPool(4, runnable -> {
-			Thread thread = new Thread(runnable, "Si-Web");
-			thread.setDaemon(true);
-			return thread;
-		});
+		this.pool = newExecutor();
 		this.http.setExecutor(pool);
 		this.http.createContext("/", this::handle);
+	}
+
+	/**
+	 * 网页线程池。
+	 *
+	 * <p>搜歌 / 探测播放地址都是阻塞的外网请求，固定 4 个线程时几个人同时搜歌就会把
+	 * 轮询接口（每 3 秒一次）一起堵住。这里用「按需扩容 + 用完回收」的池子，
+	 * 队列满了直接交给调度线程跑，保证不会无限堆积。</p>
+	 *
+	 * <p>核心线程也允许超时回收：没人用网页的时候线程数会归零，不白占栈内存。</p>
+	 */
+	private static ThreadPoolExecutor newExecutor() {
+		AtomicInteger counter = new AtomicInteger();
+		int core = Math.max(4, Math.min(8, Runtime.getRuntime().availableProcessors()));
+		int max = Math.max(16, core * 8);
+		ThreadPoolExecutor pool = new ThreadPoolExecutor(core, max, 60L, TimeUnit.SECONDS,
+				new SynchronousQueue<>(), runnable -> {
+					Thread thread = new Thread(runnable, "Si-Web-" + counter.incrementAndGet());
+					thread.setDaemon(true);
+					return thread;
+				}, new ThreadPoolExecutor.CallerRunsPolicy());
+		pool.allowCoreThreadTimeOut(true);
+		return pool;
 	}
 
 	public void start() {
@@ -103,11 +135,48 @@ public final class WebServer {
 					Si.LOGGER.error("缺少网页资源: {}", name);
 					continue;
 				}
-				assets.put(name, in.readAllBytes());
+				byte[] data = in.readAllBytes();
+				assets.put(name, data);
+				etags.put(name, etagOf(data));
+				// 文本资源启动时就压好，之后每次请求直接吐 gzip
+				if (compressible(name)) {
+					byte[] small = gzip(data);
+					if (small != null && small.length < data.length) {
+						gzipped.put(name, small);
+					}
+				}
 			} catch (IOException e) {
 				Si.LOGGER.error("读取网页资源失败: {}", name, e);
 			}
 		}
+	}
+
+	private static boolean compressible(String name) {
+		return name.endsWith(".html") || name.endsWith(".css") || name.endsWith(".js")
+				|| name.endsWith(".json") || name.endsWith(".svg");
+	}
+
+	private static byte[] gzip(byte[] data) {
+		try {
+			ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(1024, data.length / 3));
+			try (GZIPOutputStream gzip = new GZIPOutputStream(out, 8192)) {
+				gzip.write(data);
+			}
+			return out.toByteArray();
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	private static String etagOf(byte[] data) {
+		CRC32 crc = new CRC32();
+		crc.update(data);
+		return "\"" + Integer.toHexString(data.length) + "-" + Long.toHexString(crc.getValue()) + "\"";
+	}
+
+	private static boolean acceptsGzip(HttpExchange exchange) {
+		String header = exchange.getRequestHeaders().getFirst("Accept-Encoding");
+		return header != null && header.toLowerCase(Locale.ROOT).contains("gzip");
 	}
 
 	// ------------------------------------------------------------- 分发
@@ -150,13 +219,32 @@ public final class WebServer {
 			}
 			return;
 		}
+
+		String etag = etags.get(name);
+		if (etag != null) {
+			exchange.getResponseHeaders().set("ETag", etag);
+			exchange.getResponseHeaders().set("Vary", "Accept-Encoding");
+			// 内容没变就直接 304，别再传一遍几十 KB
+			if (etag.equals(exchange.getRequestHeaders().getFirst("If-None-Match"))) {
+				exchange.sendResponseHeaders(304, -1);
+				return;
+			}
+		}
+
+		byte[] gz = gzipped.get(name);
+		boolean useGzip = gz != null && acceptsGzip(exchange);
+		byte[] body = useGzip ? gz : data;
+
 		int dot = name.lastIndexOf('.');
 		String ext = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
 		exchange.getResponseHeaders().set("Content-Type", MIME.getOrDefault(ext, "application/octet-stream"));
 		exchange.getResponseHeaders().set("Cache-Control", name.endsWith(".html") ? "no-store" : "public, max-age=600");
-		exchange.sendResponseHeaders(200, data.length);
+		if (useGzip) {
+			exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+		}
+		exchange.sendResponseHeaders(200, body.length);
 		try (OutputStream out = exchange.getResponseBody()) {
-			out.write(data);
+			out.write(body);
 		}
 	}
 
@@ -176,6 +264,8 @@ public final class WebServer {
 			case "/api/search" -> apiSearch(exchange);
 			case "/api/request" -> apiRequest(exchange);
 			case "/api/entries" -> apiEntries(exchange);
+			case "/api/message" -> apiMessage(exchange);
+			case "/api/chat" -> apiChat(exchange);
 			case "/api/health" -> sendJson(exchange, 200, ok());
 			default -> sendError(exchange, 404, "接口不存在");
 		}
@@ -471,7 +561,7 @@ public final class WebServer {
 		JsonObject body = ok();
 		body.add("players", array);
 		body.addProperty("allowBroadcast", config.allowBroadcast);
-		sendJson(exchange, 200, body);
+		sendJsonCacheable(exchange, body);
 	}
 
 	private void apiSearch(HttpExchange exchange) throws IOException {
@@ -681,7 +771,130 @@ public final class WebServer {
 		JsonObject body = ok();
 		body.add("entries", array);
 		body.addProperty("online", OnlineRegistry.size());
+		sendJsonCacheable(exchange, body);
+	}
+
+	// --------------------------------------------------------------- 消息
+
+	/** 网页发一条消息，直接出现在目标玩家（或全服）的聊天栏里 */
+	private void apiMessage(HttpExchange exchange) throws IOException {
+		if (!"POST".equals(exchange.getRequestMethod())) {
+			sendError(exchange, 405, "请使用 POST");
+			return;
+		}
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+
+		JsonObject request = readJson(exchange);
+		String text = ChatService.clean(str(request, "text"));
+		if (text.isEmpty()) {
+			sendError(exchange, 400, "先写点什么吧");
+			return;
+		}
+
+		String targetName = str(request, "target");
+		boolean broadcast = ALL.equals(targetName) && config.allowBroadcast;
+
+		long now = System.currentTimeMillis();
+		long cooldownMs = 3000L;
+		String cooldownKey = session.name().toLowerCase(Locale.ROOT);
+		Long last = messageCooldowns.get(cooldownKey);
+		if (last != null && now - last < cooldownMs) {
+			long wait = (cooldownMs - (now - last) + 999) / 1000;
+			sendError(exchange, 429, "发得太快了，请 " + wait + " 秒后再试");
+			return;
+		}
+
+		UUID targetUuid = null;
+		if (!broadcast) {
+			if (targetName.isBlank() || targetName.equalsIgnoreCase("self")) {
+				OnlineRegistry.Info self = OnlineRegistry.byName(session.name());
+				if (self == null) {
+					sendError(exchange, 400, "你当前不在服务器里，请选择一位在线玩家");
+					return;
+				}
+				targetName = self.name();
+			}
+			OnlineRegistry.Info target = OnlineRegistry.byName(targetName);
+			if (target == null) {
+				sendError(exchange, 400, "玩家 " + targetName + " 不在线");
+				return;
+			}
+			targetName = target.name();
+			targetUuid = target.uuid();
+		}
+
+		MinecraftServer server = SiCore.server;
+		if (server == null) {
+			sendError(exchange, 503, "服务器还没准备好");
+			return;
+		}
+
+		ChatService.Line line = SiCore.chat().add(session.name(), text, ChatService.WEB);
+		messageCooldowns.put(cooldownKey, now);
+
+		final UUID uuid = targetUuid;
+		final String to = targetName;
+		final boolean toAll = broadcast;
+		server.executeIfPossible(() -> deliver(uuid, session.name(), text, to, toAll));
+
+		JsonObject body = ok();
+		body.addProperty("id", line.id);
+		body.addProperty("text", text);
+		body.addProperty("target", broadcast ? "" : to);
+		body.addProperty("broadcast", broadcast);
+		body.addProperty("at", line.at);
 		sendJson(exchange, 200, body);
+	}
+
+	/** 游戏内对话：玩家在游戏里说的话 + 网页发进来的消息 */
+	private void apiChat(HttpExchange exchange) throws IOException {
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+		JsonArray array = new JsonArray();
+		for (ChatService.Line line : SiCore.chat().recent(80)) {
+			JsonObject item = new JsonObject();
+			item.addProperty("id", line.id);
+			item.addProperty("name", line.name);
+			item.addProperty("text", line.text);
+			item.addProperty("source", line.source);
+			item.addProperty("at", line.at);
+			item.addProperty("mine", line.name.equalsIgnoreCase(session.name()));
+			item.addProperty("avatar", avatarFor(line.name, SiCore.accounts().get(line.name)));
+			array.add(item);
+		}
+		JsonObject body = ok();
+		body.add("messages", array);
+		body.addProperty("maxLength", ChatService.MAX_LENGTH);
+		sendJsonCacheable(exchange, body);
+	}
+
+	/** 必须在服务端线程执行 */
+	private void deliver(UUID targetUuid, String from, String text, String to, boolean broadcast) {
+		MinecraftServer server = SiCore.server;
+		if (server == null) return;
+		// 尽量贴近原版聊天：<名字> 内容，网页来的在行首加个 [Web]
+		MutableComponent line = Component.literal("[Web] ").withStyle(ChatFormatting.DARK_AQUA)
+				.append(Component.literal("<" + from + "> ").withStyle(ChatFormatting.WHITE))
+				.append(Component.literal(text).withStyle(ChatFormatting.WHITE));
+		if (broadcast) {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				player.sendSystemMessage(line);
+			}
+			return;
+		}
+		ServerPlayer target = server.getPlayerList().getPlayer(targetUuid);
+		if (target != null) {
+			target.sendSystemMessage(line);
+			return;
+		}
+		Si.LOGGER.info("消息没能送达 {}（已离线）：{}", to, text);
 	}
 
 	// --------------------------------------------------------- 内部工具
@@ -789,6 +1002,29 @@ public final class WebServer {
 		sendJson(exchange, status, body);
 	}
 
+	/**
+	 * 带 ETag 的 JSON 响应：内容没变就回 304。
+	 *
+	 * <p>网页每 3 秒轮询一次 /api/entries，绝大多数时候内容是一样的，
+	 * 用 304 省掉整包传输和前端的一次 JSON 解析。Cache-Control 用 no-cache
+	 * （允许缓存，但每次都要回来确认一次）。</p>
+	 */
+	private void sendJsonCacheable(HttpExchange exchange, JsonObject body) throws IOException {
+		byte[] data = GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
+		String etag = etagOf(data);
+		exchange.getResponseHeaders().set("ETag", etag);
+		exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+		if (etag.equals(exchange.getRequestHeaders().getFirst("If-None-Match"))) {
+			exchange.sendResponseHeaders(304, -1);
+			return;
+		}
+		exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+		exchange.sendResponseHeaders(200, data.length);
+		try (OutputStream out = exchange.getResponseBody()) {
+			out.write(data);
+		}
+	}
+
 	private JsonObject readJson(HttpExchange exchange) {
 		try (InputStream in = exchange.getRequestBody()) {
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -875,6 +1111,16 @@ public final class WebServer {
 
 	private boolean allowLogin(String ip) {
 		long now = System.currentTimeMillis();
+		if (loginAttempts.size() > 256) {
+			// 扫一遍，把 5 分钟内没再尝试过的 IP 清掉，避免被刷爆内存
+			loginAttempts.entrySet().removeIf(entry -> {
+				Deque<Long> deque = entry.getValue();
+				synchronized (deque) {
+					Long last = deque.peekLast();
+					return last == null || now - last > 5 * 60_000L;
+				}
+			});
+		}
 		Deque<Long> attempts = loginAttempts.computeIfAbsent(ip, k -> new ArrayDeque<>());
 		synchronized (attempts) {
 			while (!attempts.isEmpty() && now - attempts.peekFirst() > 5 * 60_000L) {

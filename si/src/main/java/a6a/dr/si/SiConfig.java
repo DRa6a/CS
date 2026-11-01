@@ -3,6 +3,9 @@ package a6a.dr.si;
 import a6a.dr.Si;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.Reader;
@@ -25,8 +28,13 @@ public final class SiConfig {
 	public String bindAddress = "0.0.0.0";
 	/** 监听端口（需要在防火墙/安全组放行） */
 	public int port = 8765;
-	/** 对外访问地址，例如 http://1.2.3.4:8765 ；留空则自动取内网 IP */
-	public String publicUrl = "";
+	/**
+	 * 显示给玩家的点歌台地址（聊天栏提示、/si url、网页副标题都读这个）。
+	 *
+	 * <p>留空就自动取内网 IP。可以只写域名（mc.example.com），会自动补 http://。
+	 * 老版本里的 {@code publicUrl} 已合并到这里，读取时会自动迁移。</p>
+	 */
+	public String displayUrl = "";
 	/** 网页标题里显示的服务器名 */
 	public String serverName = "我的世界服务器";
 	/** 登录会话有效期（小时） */
@@ -63,15 +71,24 @@ public final class SiConfig {
 		SiConfig config = new SiConfig();
 		if (Files.exists(path)) {
 			try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-				SiConfig loaded = GSON.fromJson(reader, SiConfig.class);
+				JsonObject raw = JsonParser.parseReader(reader).getAsJsonObject();
+				SiConfig loaded = GSON.fromJson(raw, SiConfig.class);
 				if (loaded != null) {
 					config = loaded;
+				}
+				// 老版本这个字段叫 publicUrl，现在统一成 displayUrl：新的没填就沿用旧的
+				if (config.displayUrl == null || config.displayUrl.isBlank()) {
+					JsonElement legacy = raw.get("publicUrl");
+					if (legacy != null && !legacy.isJsonNull()) {
+						config.displayUrl = legacy.getAsString();
+					}
 				}
 			} catch (Exception e) {
 				Si.LOGGER.warn("读取 si.json 失败，将使用默认配置", e);
 			}
 		}
 		config.normalize();
+		// 写回一次，老的 publicUrl 键就自然消失了
 		config.save();
 		return config;
 	}
@@ -87,7 +104,7 @@ public final class SiConfig {
 		if (searchTimeoutSeconds < 3) searchTimeoutSeconds = 10;
 		if (admins == null) admins = new ArrayList<>();
 		if (serverName == null || serverName.isBlank()) serverName = "我的世界服务器";
-		if (publicUrl == null) publicUrl = "";
+		if (displayUrl == null) displayUrl = "";
 		if (avatarUrl == null) avatarUrl = "";
 		if (fallbackUrlTemplate == null) fallbackUrlTemplate = "";
 		if (fallbackJsonField == null) fallbackJsonField = "";

@@ -10,22 +10,29 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 在线玩家快照。HTTP 线程不能直接读 Minecraft 的服务端状态，
  * 所以进服 / 退服时维护一份只读快照供网页查询。
+ *
+ * <p>按名字查用一张小写索引表，避免每次点歌都把所有在线玩家扫一遍。</p>
  */
 public final class OnlineRegistry {
 	public record Info(UUID uuid, String name, boolean hasCu) {
 	}
 
 	private static final Map<UUID, Info> ONLINE = new ConcurrentHashMap<>();
+	private static final Map<String, Info> BY_NAME = new ConcurrentHashMap<>();
 
 	private OnlineRegistry() {
 	}
 
 	public static void put(Info info) {
-		ONLINE.put(info.uuid(), info);
+		Info old = ONLINE.put(info.uuid(), info);
+		if (old != null) BY_NAME.remove(lower(old.name()), old);
+		BY_NAME.put(lower(info.name()), info);
 	}
 
 	public static void remove(UUID uuid) {
-		if (uuid != null) ONLINE.remove(uuid);
+		if (uuid == null) return;
+		Info old = ONLINE.remove(uuid);
+		if (old != null) BY_NAME.remove(lower(old.name()), old);
 	}
 
 	public static Info get(UUID uuid) {
@@ -33,12 +40,11 @@ public final class OnlineRegistry {
 	}
 
 	public static Info byName(String name) {
-		if (name == null) return null;
-		String key = name.toLowerCase(Locale.ROOT);
-		for (Info info : ONLINE.values()) {
-			if (info.name().toLowerCase(Locale.ROOT).equals(key)) return info;
-		}
-		return null;
+		return name == null ? null : BY_NAME.get(lower(name));
+	}
+
+	private static String lower(String name) {
+		return name == null ? "" : name.toLowerCase(Locale.ROOT);
 	}
 
 	public static List<String> names() {
@@ -57,5 +63,6 @@ public final class OnlineRegistry {
 
 	public static void clear() {
 		ONLINE.clear();
+		BY_NAME.clear();
 	}
 }

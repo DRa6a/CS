@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "a6a.dr.cu.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"ChatScreenMixin",
+		"CommandSuggestionsMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

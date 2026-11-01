@@ -15,6 +15,7 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.SourceDataLine;
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -58,6 +59,9 @@ public final class AudioEngine {
 	private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 			+ "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 	private static final long MAX_BYTES = 96L * 1024 * 1024;
+	private static final char[] HEX = "0123456789abcdef".toCharArray();
+	/** 缓存清理最短间隔：每下一首就扫一遍目录太浪费 */
+	private static final long TRIM_INTERVAL_MS = 30_000L;
 
 	private static final AudioEngine INSTANCE = new AudioEngine();
 
@@ -70,6 +74,9 @@ public final class AudioEngine {
 	private Thread worker;
 	private volatile float volume = 0.8f;
 	private volatile CuConfig config;
+	private volatile long lastTrimAt;
+	/** 只在渲染线程读写 */
+	private int quietTicks;
 
 	private AudioEngine() {
 	}
@@ -105,7 +112,8 @@ public final class AudioEngine {
 			} catch (Exception ignored) {
 			}
 		}
-		if (current.get() != null) {
+		// 背景音乐每 4 tick（5 次/秒）按一次就够了，没必要占满 20 次
+		if (current.get() != null && (++quietTicks & 3) == 0) {
 			MusicDucker.keepQuiet();
 		}
 	}
@@ -126,6 +134,35 @@ public final class AudioEngine {
 		return queue.size();
 	}
 
+	// ---------------------------------------------------- 当前曲目（给歌词/HUD 用）
+
+	public String currentRequestId() {
+		Job job = current.get();
+		return job == null ? null : job.requestId;
+	}
+
+	public String currentTitle() {
+		Job job = current.get();
+		return job == null ? null : job.title;
+	}
+
+	public String currentArtist() {
+		Job job = current.get();
+		return job == null ? null : job.artist;
+	}
+
+	public String currentUrl() {
+		Job job = current.get();
+		return job == null ? null : job.url;
+	}
+
+	/** 当前曲目已播放的毫秒数；未开始播放返回 0 */
+	public long currentTimeMs() {
+		Job job = current.get();
+		if (job == null || job.startedAt <= 0L) return 0L;
+		return Math.max(0L, System.currentTimeMillis() - job.startedAt);
+	}
+
 	public void enqueue(Packets.Play payload) {
 		Job job = new Job(payload);
 		queue.add(job);
@@ -143,6 +180,7 @@ public final class AudioEngine {
 			queued.cancelled = true;
 		}
 		queue.clear();
+		prefetched.values().forEach(future -> future.cancel(true));
 		prefetched.clear();
 		mainThreadTasks.add(MusicDucker::restore);
 		Cu.LOGGER.info("停止播放：{}", reason);
@@ -177,6 +215,7 @@ public final class AudioEngine {
 			} finally {
 				closeLine(job);
 				current.compareAndSet(job, null);
+				cleanupPrefetch();
 				if (queue.isEmpty()) {
 					mainThreadTasks.add(MusicDucker::restore);
 				}
@@ -235,6 +274,14 @@ public final class AudioEngine {
 		}, downloader));
 	}
 
+	/** 丢掉已经不在队列里的预取结果，避免这张表随着播放一直变长 */
+	private void cleanupPrefetch() {
+		if (prefetched.isEmpty()) return;
+		Job next = queue.peek();
+		String keep = next == null ? null : next.requestId;
+		prefetched.keySet().removeIf(id -> !id.equals(keep));
+	}
+
 	private Path cacheDir() throws IOException {
 		Path dir = FabricLoader.getInstance().getConfigDir().resolve("cu-cache");
 		Files.createDirectories(dir);
@@ -272,8 +319,9 @@ public final class AudioEngine {
 				throw new IOException("HTTP " + status);
 			}
 			long total = 0;
+			boolean complete = false;
 			try (InputStream in = connection.getInputStream();
-				 OutputStream out = Files.newOutputStream(tmp)) {
+				 OutputStream out = new BufferedOutputStream(Files.newOutputStream(tmp), 256 * 1024)) {
 				byte[] buffer = new byte[32 * 1024];
 				int n;
 				while (!job.cancelled && (n = in.read(buffer)) > 0) {
@@ -281,8 +329,10 @@ public final class AudioEngine {
 					if (total > MAX_BYTES) throw new IOException("音频文件过大");
 					out.write(buffer, 0, n);
 				}
+				complete = !job.cancelled;
 			} finally {
-				connection.disconnect();
+				// 正常下完就不断开，连接留在池里，下一首省掉一次 TCP + TLS 握手
+				if (!complete) connection.disconnect();
 			}
 			if (job.cancelled) {
 				Files.deleteIfExists(tmp);
@@ -300,6 +350,9 @@ public final class AudioEngine {
 	}
 
 	private void trimCache() {
+		long now = System.currentTimeMillis();
+		if (now - lastTrimAt < TRIM_INTERVAL_MS) return;
+		lastTrimAt = now;
 		try {
 			Path dir = cacheDir();
 			long limit = (long) (config == null ? 512 : config.maxCacheMb) * 1024 * 1024;
@@ -326,9 +379,13 @@ public final class AudioEngine {
 	private static String sha1(String text) {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-1").digest(text.getBytes(StandardCharsets.UTF_8));
-			StringBuilder sb = new StringBuilder();
-			for (byte b : digest) sb.append(String.format("%02x", b));
-			return sb.toString();
+			char[] out = new char[digest.length * 2];
+			for (int i = 0; i < digest.length; i++) {
+				int value = digest[i] & 0xFF;
+				out[i * 2] = HEX[value >>> 4];
+				out[i * 2 + 1] = HEX[value & 0x0F];
+			}
+			return new String(out);
 		} catch (Exception e) {
 			return Integer.toHexString(text.hashCode());
 		}
@@ -361,6 +418,8 @@ public final class AudioEngine {
 			Bitstream bitstream = new Bitstream(raw);
 			Decoder decoder = new Decoder();
 			SourceDataLine line = null;
+			// 复用同一块 PCM 缓冲：原来每帧 new 一次（约 38 帧/秒），持续播放时一直在制造垃圾
+			byte[] pcm = new byte[8192];
 			try {
 				Header header;
 				while (!job.cancelled && (header = bitstream.readFrame()) != null) {
@@ -375,16 +434,17 @@ public final class AudioEngine {
 					}
 					short[] buffer = samples.getBuffer();
 					int length = samples.getBufferLength();
-					byte[] pcm = new byte[length * 2];
+					int bytes = length * 2;
+					if (pcm.length < bytes) pcm = new byte[bytes];
 					float gain = gain(job);
-					for (int i = 0; i < length; i++) {
-						int value = Math.round(buffer[i] * gain);
+					for (int i = 0, j = 0; i < length; i++, j += 2) {
+						int value = (int) (buffer[i] * gain);
 						if (value > 32767) value = 32767;
-						if (value < -32768) value = -32768;
-						pcm[i * 2] = (byte) (value & 0xFF);
-						pcm[i * 2 + 1] = (byte) ((value >> 8) & 0xFF);
+						else if (value < -32768) value = -32768;
+						pcm[j] = (byte) value;
+						pcm[j + 1] = (byte) (value >> 8);
 					}
-					line.write(pcm, 0, pcm.length);
+					line.write(pcm, 0, bytes);
 					bitstream.closeFrame();
 				}
 				if (line != null && !job.cancelled) line.drain();
@@ -418,11 +478,11 @@ public final class AudioEngine {
 	private static void applyGain(byte[] buffer, int length, float gain) {
 		for (int i = 0; i + 1 < length; i += 2) {
 			int value = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
-			value = Math.round(value * gain);
+			value = (int) (value * gain);
 			if (value > 32767) value = 32767;
-			if (value < -32768) value = -32768;
-			buffer[i] = (byte) (value & 0xFF);
-			buffer[i + 1] = (byte) ((value >> 8) & 0xFF);
+			else if (value < -32768) value = -32768;
+			buffer[i] = (byte) value;
+			buffer[i + 1] = (byte) (value >> 8);
 		}
 	}
 
@@ -456,7 +516,7 @@ public final class AudioEngine {
 		final boolean broadcast;
 		volatile boolean cancelled;
 		volatile SourceDataLine line;
-		volatile long startedAt = System.currentTimeMillis();
+		volatile long startedAt = 0L;
 
 		Job(Packets.Play payload) {
 			this.requestId = payload.requestId();

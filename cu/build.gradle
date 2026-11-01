@@ -6,6 +6,11 @@ plugins {
 repositories {
 	// MP3 解码库 jlayer 来自 Maven Central
 	mavenCentral()
+	// ModMenu（配置页入口）
+	maven {
+		name = "TerraformersMC"
+		url = "https://maven.terraformersmc.com/releases/"
+	}
 }
 
 configurations {
@@ -35,6 +40,9 @@ dependencies {
 
 	// MP3 解码（LGPL）
 	embed "com.googlecode.soundlibs:jlayer:1.0.1.4"
+
+	// ModMenu（仅编译期；terraformers 发布的是 named 映射，打包时 Loom 会重映射我们的类与运行时对齐）
+	clientCompileOnly "com.terraformersmc:modmenu:20.0.3"
 }
 
 processResources {

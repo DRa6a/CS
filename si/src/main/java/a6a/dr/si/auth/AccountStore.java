@@ -20,6 +20,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 玩家账号存储：config/si/accounts.json
@@ -49,6 +53,13 @@ public final class AccountStore {
 
 	private final Path file;
 	private final Map<String, Account> accounts = new ConcurrentHashMap<>();
+	/** 只用来延后落盘 lastLogin，别在登录路径上写文件 */
+	private final ScheduledExecutorService writer = Executors.newSingleThreadScheduledExecutor(runnable -> {
+		Thread thread = new Thread(runnable, "Si-Account-Save");
+		thread.setDaemon(true);
+		return thread;
+	});
+	private ScheduledFuture<?> pendingFlush;
 
 	public AccountStore(Path file) {
 		this.file = file;
@@ -139,7 +150,8 @@ public final class AccountStore {
 		byte[] actual = hash(password, salt);
 		if (!MessageDigest.isEqual(expected, actual)) return false;
 		account.lastLogin = System.currentTimeMillis();
-		save();
+		// lastLogin 只影响「上次登录时间」的显示，没必要为了它整份文件重写一遍
+		scheduleSave();
 		return true;
 	}
 
@@ -172,7 +184,15 @@ public final class AccountStore {
 		}
 	}
 
-	private void save() {
+	/** 合并短时间内的多次登录，2 秒后统一写一次盘 */
+	private void scheduleSave() {
+		synchronized (this) {
+			if (pendingFlush != null && !pendingFlush.isDone()) return;
+			pendingFlush = writer.schedule(this::save, 2, TimeUnit.SECONDS);
+		}
+	}
+
+	private synchronized void save() {
 		try {
 			Files.createDirectories(file.getParent());
 			Map<String, Account> snapshot = new LinkedHashMap<>(accounts);

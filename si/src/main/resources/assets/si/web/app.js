@@ -8,17 +8,20 @@
 		netease: { enabled: true, bound: false, nickname: '' },
 		songs: [],
 		entries: [],
+		messages: [],
 		players: [],
 		pollTimer: null,
 		playerTimer: null,
+		msgTimer: null,
 		searchTimer: null,
 		qrTimer: null,
 		qrKey: null,
 		nmMode: 'qr',
 		lastQuery: '',
-		lastPlayersKey: ''
+		lastPlayersKey: '',
+		lastEntriesKey: '',
+		lastMessagesKey: ''
 	};
-
 	// ------------------------------------------------------------ 网络
 
 	async function api(path, options) {
@@ -28,6 +31,10 @@
 			opts.body = JSON.stringify(opts.body);
 		}
 		const response = await fetch(path, opts);
+		// 服务端内容没变会回 304，浏览器把它还原成缓存里的那份；真拿到裸 304 就当没变化
+		if (response.status === 304) {
+			return { ok: true, notModified: true };
+		}
 		let data = null;
 		try {
 			data = await response.json();
@@ -83,9 +90,11 @@
 		renderNetease();
 		refreshPlayers();
 		refreshEntries();
+		refreshChat();
 		stopTimers();
 		state.pollTimer = setInterval(refreshEntries, 3000);
 		state.playerTimer = setInterval(refreshPlayers, 10000);
+		state.msgTimer = setInterval(refreshChat, 3000);
 	}
 
 	function stopTimers() {
@@ -96,6 +105,10 @@
 		if (state.playerTimer) {
 			clearInterval(state.playerTimer);
 			state.playerTimer = null;
+		}
+		if (state.msgTimer) {
+			clearInterval(state.msgTimer);
+			state.msgTimer = null;
 		}
 	}
 
@@ -373,6 +386,7 @@
 			if (data.error === '请先登录') showAuth();
 			return;
 		}
+		if (data.notModified) return;
 		state.players = data.players || [];
 		state.server = state.server || {};
 		state.server.allowBroadcast = data.allowBroadcast;
@@ -422,6 +436,7 @@
 			el.textContent = '当前没有在线玩家';
 			select.appendChild(el);
 		}
+		updateMsgHint();
 	}
 
 	// ------------------------------------------------------------ 搜索
@@ -513,16 +528,22 @@
 		});
 	}
 
+	// 边打字边搜会并发好几个请求，回来顺序不一定对，用序号只认最后一次
+	let searchSeq = 0;
+
 	async function search() {
 		const query = $('searchInput').value.trim();
 		state.lastQuery = query;
 		if (!query) {
+			searchSeq++;
 			state.songs = [];
 			renderSongs();
 			return;
 		}
+		const seq = ++searchSeq;
 		$('searchBtn').innerHTML = '<span class="spin"></span>';
 		const data = await api('/api/search?q=' + encodeURIComponent(query));
+		if (seq !== searchSeq) return;
 		$('searchBtn').textContent = '搜索';
 		if (!data.ok) {
 			toast(data.error || '搜索失败', 'error');
@@ -581,8 +602,14 @@
 			if (data.error === '请先登录') showAuth();
 			return;
 		}
+		if (data.notModified) return;
 		state.entries = data.entries || [];
-		renderEntries();
+		// 内容没变就不重绘：每 3 秒把列表拆了重建既打断滚动，也白烧 CPU
+		const key = JSON.stringify(state.entries);
+		if (key !== state.lastEntriesKey) {
+			state.lastEntriesKey = key;
+			renderEntries();
+		}
 		if (typeof data.online === 'number' && state.server) {
 			state.server.online = data.online;
 			updateServerBadge();
@@ -633,6 +660,122 @@
 		});
 	}
 
+	// ------------------------------------------------------------ 游戏内对话
+
+	const MAX_MSG = 120;
+
+	async function refreshChat() {
+		const data = await api('/api/chat');
+		if (!data.ok) {
+			if (data.error === '请先登录') showAuth();
+			return;
+		}
+		if (data.notModified) return;
+		state.messages = data.messages || [];
+		const key = JSON.stringify(state.messages);
+		if (key === state.lastMessagesKey) return;
+		state.lastMessagesKey = key;
+		renderChat();
+	}
+
+	function renderChat() {
+		const list = $('chatList');
+		// 只有本来就在底部时才跟着滚，别打断往上翻记录的人
+		const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+		list.textContent = '';
+		if (state.messages.length === 0) {
+			const empty = document.createElement('li');
+			empty.className = 'empty';
+			empty.textContent = '还没有人说话';
+			list.appendChild(empty);
+			$('chatHint').textContent = '';
+			return;
+		}
+		$('chatHint').textContent = state.messages.length + ' 条';
+
+		state.messages.forEach((line) => {
+			const li = document.createElement('li');
+			li.className = 'chat' + (line.mine ? ' mine' : '');
+
+			const avatar = document.createElement('span');
+			avatar.className = 'chat-avatar';
+			avatar.textContent = (line.name || '?').trim().charAt(0).toUpperCase();
+			if (line.avatar) {
+				const img = document.createElement('img');
+				img.alt = '';
+				img.loading = 'lazy';
+				img.src = line.avatar;
+				img.onerror = () => img.remove();
+				avatar.appendChild(img);
+			}
+
+			const body = document.createElement('div');
+			body.className = 'chat-body';
+
+			if (line.source === 'web') {
+				const tag = document.createElement('span');
+				tag.className = 'chat-tag';
+				tag.textContent = 'WEB';
+				body.appendChild(tag);
+			}
+
+			const name = document.createElement('span');
+			name.className = 'chat-name';
+			name.textContent = '<' + line.name + '>';
+			body.appendChild(name);
+
+			const text = document.createElement('span');
+			text.className = 'chat-text';
+			text.textContent = ' ' + line.text;
+			body.appendChild(text);
+
+			li.appendChild(avatar);
+			li.appendChild(body);
+			list.appendChild(li);
+		});
+
+		if (stick) list.scrollTop = list.scrollHeight;
+	}
+
+	function updateMsgCount() {
+		$('msgCount').textContent = $('msgInput').value.length + ' / ' + MAX_MSG;
+	}
+
+	function updateMsgHint() {
+		const target = currentTarget();
+		$('msgHint').textContent = !target ? '' : (target === '__all__' ? '全服' : target);
+	}
+
+	async function sendMessage() {
+		const text = $('msgInput').value.trim();
+		const target = currentTarget();
+		if (!target) {
+			toast('先选择一位在线玩家', 'error');
+			return;
+		}
+		if (!text) {
+			toast('先写点什么吧', 'error');
+			$('msgInput').focus();
+			return;
+		}
+		const button = $('msgSend');
+		button.disabled = true;
+		const data = await api('/api/message', {
+			method: 'POST',
+			body: { target: target, text: text }
+		});
+		button.disabled = false;
+		if (data.ok) {
+			$('msgInput').value = '';
+			updateMsgCount();
+			toast(data.broadcast ? '已发到全服聊天' : '已发给 ' + data.target, 'ok');
+			refreshChat();
+		} else {
+			toast(data.error || '发送失败', 'error');
+			if (data.error && data.error.indexOf('不在线') >= 0) refreshPlayers();
+		}
+	}
+
 	// ------------------------------------------------------------ 绑定
 
 	function bindMain() {
@@ -676,6 +819,42 @@
 				artist: ''
 			}, $('directSend'));
 		});
+
+		$('targetSelect').addEventListener('change', updateMsgHint);
+		$('msgSend').addEventListener('click', sendMessage);
+		$('msgInput').addEventListener('input', updateMsgCount);
+		$('msgInput').addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' && !event.shiftKey) {
+				event.preventDefault();
+				sendMessage();
+			}
+		});
+	}
+
+	// ------------------------------------------------------------ 低性能兜底
+
+	// 开页面后量一段帧率，偏低就给 <html> 挂 perf-lite：关掉毛玻璃和极光动画。
+	// 集成显卡 / 老笔记本 / 同时开着游戏的情况下，这一档能救回不少帧数。
+	function detectPerf() {
+		const html = document.documentElement;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			html.classList.add('perf-lite');
+			return;
+		}
+		let frames = 0;
+		let start = 0;
+		const step = (now) => {
+			if (!start) start = now;
+			frames++;
+			if (now - start < 1200) {
+				requestAnimationFrame(step);
+				return;
+			}
+			if (frames / ((now - start) / 1000) < 45) {
+				html.classList.add('perf-lite');
+			}
+		};
+		requestAnimationFrame(step);
 	}
 
 	// ------------------------------------------------------------ 启动
@@ -684,4 +863,9 @@
 	bindSettings();
 	bindMain();
 	loadMe();
+	if (document.readyState === 'complete') {
+		setTimeout(detectPerf, 300);
+	} else {
+		window.addEventListener('load', () => setTimeout(detectPerf, 300));
+	}
 })();

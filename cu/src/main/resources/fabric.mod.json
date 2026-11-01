@@ -3,7 +3,7 @@
 	"id": "cu",
 	"version": "${version}",
 	"name": "Cu · 点歌台客户端",
-	"description": "接收服务端（Si）推送的点歌请求并播放：自动下载音频、解码 MP3、按队列播放。",
+	"description": "接收服务端（Si）推送的点歌请求并播放：自动下载音频、解码 MP3、按队列播放。（AI 辅助开发）",
 	"authors": [
 		"a6a"
 	],
@@ -16,12 +16,24 @@
 		],
 		"client": [
 			"a6a.dr.client.CuClient"
+		],
+		"modmenu": [
+			"a6a.dr.cu.config.CuModMenuIntegration"
 		]
 	},
+	"mixins": [
+		{
+			"config": "cu.client.mixins.json",
+			"environment": "client"
+		}
+	],
 	"depends": {
 		"fabricloader": ">=0.20.1",
 		"minecraft": "~26.2",
 		"java": ">=25",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

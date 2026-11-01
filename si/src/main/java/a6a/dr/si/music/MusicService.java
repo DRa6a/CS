@@ -1,6 +1,7 @@
 package a6a.dr.si.music;
 
 import a6a.dr.Si;
+import a6a.dr.si.util.TtlCache;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -17,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -58,6 +61,18 @@ public final class MusicService {
 
 	private final int timeoutMs;
 
+	/**
+	 * 三层缓存，挡住重复的外网往返：
+	 * <ul>
+	 *   <li>搜索结果：关键词命中率最高（前端边打字边搜）</li>
+	 *   <li>播放地址：按歌曲 id 存，TTL 短一些——地址是带签名会过期的</li>
+	 *   <li>可播探测：同一个链接反复点歌不用每次都发 Range 请求</li>
+	 * </ul>
+	 */
+	private final TtlCache<String, List<Song>> searchCache = new TtlCache<>(128, 5 * 60_000L);
+	private final TtlCache<String, Resolved> resolveCache = new TtlCache<>(512, 3 * 60_000L);
+	private final TtlCache<String, Probe> probeCache = new TtlCache<>(256, 3 * 60_000L);
+
 	public MusicService() {
 		this(10);
 	}
@@ -76,6 +91,13 @@ public final class MusicService {
 		String query = keyword == null ? "" : keyword.trim();
 		if (query.isEmpty()) return List.of();
 		int size = Math.min(Math.max(limit, 1), 50);
+
+		// 搜索结果本身和 Cookie 无关，但绑定与否会影响返回的曲库，分开存
+		String cacheKey = query.toLowerCase(Locale.ROOT) + "|" + size
+				+ (musicU == null || musicU.isBlank() ? "|anon" : "|bound");
+		List<Song> cached = searchCache.get(cacheKey);
+		if (cached != null) return cached;
+
 		String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
 
 		Map<String, String> headers = musicHeaders(musicU);
@@ -93,7 +115,10 @@ public final class MusicService {
 				Response response = request(endpoint, "GET", headers, 3, 4 * 1024 * 1024);
 				if (response.status != 200) throw new IOException("HTTP " + response.status);
 				List<Song> songs = parseSongs(new String(response.body, StandardCharsets.UTF_8));
-				if (songs != null) return songs;
+				if (songs != null) {
+					searchCache.put(cacheKey, songs);
+					return songs;
+				}
 			} catch (IOException e) {
 				last = e;
 			}
@@ -289,14 +314,29 @@ public final class MusicService {
 	/**
 	 * 批量解析播放地址（一次请求查多首），用于在搜索结果里直接标出能不能播。
 	 *
+	 * <p>命中缓存的 id 不再发出去；点歌时 {@link #resolveUrl} 也能直接复用搜索结果里拿到的地址。</p>
+	 *
 	 * @param musicU 绑定后的 MUSIC_U；匿名传 null
 	 */
 	public Map<Long, Resolved> resolveUrls(Collection<Long> ids, String musicU) {
 		Map<Long, Resolved> result = new LinkedHashMap<>();
 		if (ids == null || ids.isEmpty()) return result;
-		StringBuilder list = new StringBuilder();
+
+		String tag = cookieTag(musicU);
+		LinkedHashSet<Long> missing = new LinkedHashSet<>();
 		for (Long id : ids) {
 			if (id == null || id <= 0) continue;
+			Resolved cached = resolveCache.get(id + tag);
+			if (cached != null) {
+				result.put(id, cached);
+			} else {
+				missing.add(id);
+			}
+		}
+		if (missing.isEmpty()) return result;
+
+		StringBuilder list = new StringBuilder();
+		for (Long id : missing) {
 			if (list.length() > 0) list.append(',');
 			list.append(id);
 			if (list.length() > 900) break;
@@ -316,7 +356,9 @@ public final class MusicService {
 				int code = item.has("code") ? item.get("code").getAsInt() : -1;
 				String resolvedUrl = string(item, "url", null);
 				int fee = item.has("fee") ? item.get("fee").getAsInt() : 0;
-				result.put(id, new Resolved(id, code, resolvedUrl, fee));
+				Resolved resolved = new Resolved(id, code, resolvedUrl, fee);
+				result.put(id, resolved);
+				resolveCache.put(id + tag, resolved);
 			}
 		} catch (Exception e) {
 			Si.LOGGER.debug("批量解析播放地址失败: {}", e.toString());
@@ -324,11 +366,19 @@ public final class MusicService {
 		return result;
 	}
 
+	/** 缓存键里区分「有没有绑定账号」，避免匿名用户把 VIP 用户的结果覆盖掉 */
+	private static String cookieTag(String musicU) {
+		if (musicU == null || musicU.isBlank()) return "@anon";
+		return "@" + Integer.toHexString(musicU.hashCode());
+	}
+
 	/** 探测地址是否真的能拿到音频，避免推给客户端一个 404。 */
 	public Probe probe(String url) {
 		if (url == null || url.isBlank()) {
 			return new Probe(false, 0, null, 0, null, "地址为空");
 		}
+		Probe cached = probeCache.get(url);
+		if (cached != null) return cached;
 		try {
 			Response response = request(url, "GET", Map.of(
 					"User-Agent", UA,
@@ -354,7 +404,10 @@ public final class MusicService {
 					error = "音频内容为空，可能已下架";
 				}
 			}
-			return new Probe(ok, response.status, type, response.length, response.finalUrl, error);
+			Probe probe = new Probe(ok, response.status, type, response.length, response.finalUrl, error);
+			// 只有拿到过 HTTP 响应的才缓存，网络抖动不要留下 3 分钟的坏结果
+			if (probe.status() > 0) probeCache.put(url, probe);
+			return probe;
 		} catch (Exception e) {
 			return new Probe(false, 0, null, 0, null, "无法访问音频地址: " + e.getMessage());
 		}
@@ -459,8 +512,12 @@ public final class MusicService {
 				} catch (IOException e) {
 					// 有些 CDN 在 Range 请求下不给 body，忽略
 				}
+				// 读完千万别 disconnect()：那会直接关掉 socket，
+				// 下次请求又得重新做一遍 TCP + TLS 握手。留着它，连接会回到 keep-alive 池。
+			} else {
+				// 错误响应不读 body，占着连接没意义，直接断掉
+				connection.disconnect();
 			}
-			connection.disconnect();
 			return new Response(status, contentType, length, current, body, read, cookies.toString());
 		}
 		throw new IOException("重定向次数过多");

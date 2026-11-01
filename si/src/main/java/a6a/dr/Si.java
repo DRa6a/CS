@@ -6,6 +6,7 @@ import a6a.dr.si.auth.AccountStore;
 import a6a.dr.si.auth.PasswordSetup;
 import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.command.SiCommand;
+import a6a.dr.si.message.ChatService;
 import a6a.dr.si.music.FallbackSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
@@ -48,7 +49,8 @@ public class Si implements ModInitializer {
 				new RequestLog(config.historySize),
 				new NeteaseStore(dir.resolve("netease.json")),
 				new FallbackSource(config.fallbackEnabled, config.fallbackUrlTemplate,
-						config.fallbackJsonField, config.searchTimeoutSeconds)
+						config.fallbackJsonField, config.searchTimeoutSeconds),
+				new ChatService(200)
 		);
 
 		SiNetworking.register();
@@ -102,6 +104,14 @@ public class Si implements ModInitializer {
 				player.sendSystemMessage(SiNetworking.prefix().append(reply));
 			}
 			return false;
+		});
+
+		// 记一份聊天记录给网页显示「游戏内对话」。
+		// 上面返回 false 时这条不会走到这里，所以密码不会被记进去。
+		ServerMessageEvents.CHAT_MESSAGE.register((message, player, bound) -> {
+			String text = message.signedContent();
+			if (text == null || text.isBlank()) return;
+			SiCore.chat().add(player.getName().getString(), text, ChatService.GAME);
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registry, selection) -> SiCommand.register(dispatcher));
