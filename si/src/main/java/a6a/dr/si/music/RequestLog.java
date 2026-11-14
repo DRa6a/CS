@@ -13,6 +13,9 @@ import java.util.UUID;
  * <p>全服播放时同一个请求会发给多个客户端，每个客户端各自回报状态。所以这里不是
  * 「最后一条回报覆盖全部」，而是按接收者分别记录，再聚合出一个整体状态：
  * 有人在播 → 播放中；没人播但还有人排队 → 排队中；全部有结果 → 播完 / 切歌 / 失败。</p>
+ *
+ * <p>推包时就登记接收者，玩家中途掉线由服务端补一个「已离线」终态，
+ * 这样不会出现「人走了但网页一直显示播放中」。</p>
  */
 public final class RequestLog {
 	public static final String QUEUED = "QUEUED";
@@ -21,6 +24,8 @@ public final class RequestLog {
 	public static final String FAILED = "FAILED";
 	/** 没播完就被切掉 / 被新歌打断 */
 	public static final String SKIPPED = "SKIPPED";
+	/** 还在听的时候人走了，客户端不可能再回报状态，服务端自己落终态 */
+	public static final String OFFLINE = "OFFLINE";
 
 	public static final class Entry {
 		public String id;
@@ -70,6 +75,45 @@ public final class RequestLog {
 	}
 
 	/**
+	 * 登记一个接收者。
+	 *
+	 * <p>推送播放请求的当下就记上，服务端才知道「这条歌该由谁回报」。
+	 * 客户端要是还没来得及回报就掉线，靠这条记录把它收尾，
+	 * 不然网页会一直挂着「排队中 / 播放中」。</p>
+	 */
+	public synchronized void addListener(String id, UUID listener) {
+		Entry entry = find(id);
+		if (entry == null || listener == null) return;
+		// 已经回报过就别覆盖：客户端可能比服务端登记还快
+		entry.listeners.putIfAbsent(listener, QUEUED);
+		recompute(entry);
+	}
+
+	/**
+	 * 某个客户端掉线了。它不会再回报状态，
+	 * 所以把它名下还开着的条目落成终态（{@link #OFFLINE}）。
+	 *
+	 * <p>没有这一步的话，玩家在歌没播完时退出，网页会永远显示「播放中」。</p>
+	 *
+	 * @return 被收尾的条目数
+	 */
+	public synchronized int listenerOffline(UUID uuid) {
+		if (uuid == null) return 0;
+		int touched = 0;
+		for (Entry entry : entries) {
+			String state = entry.listeners.get(uuid);
+			if (state == null) continue;
+			// 已经落过终态的（播完 / 失败 / 切歌）不用动
+			if (PLAYING.equals(state) || QUEUED.equals(state)) {
+				entry.listeners.put(uuid, OFFLINE);
+				recompute(entry);
+				touched++;
+			}
+		}
+		return touched;
+	}
+
+	/**
 	 * 服务端自己下的结论（没发出去 / 玩家离线 / 没有可播客户端）。
 	 * 这种条目不会再收到客户端回报，所以直接落终态。
 	 */
@@ -89,6 +133,7 @@ public final class RequestLog {
 		int queued = 0;
 		int failed = 0;
 		int skipped = 0;
+		int offline = 0;
 		int done = 0;
 		for (String state : entry.listeners.values()) {
 			switch (state) {
@@ -96,6 +141,7 @@ public final class RequestLog {
 				case QUEUED -> queued++;
 				case FAILED -> failed++;
 				case SKIPPED -> skipped++;
+				case OFFLINE -> offline++;
 				default -> done++;
 			}
 		}
@@ -108,6 +154,9 @@ public final class RequestLog {
 			entry.state = FAILED;
 		} else if (skipped > 0) {
 			entry.state = SKIPPED;
+		} else if (offline > 0) {
+			// 人走了，但歌没播完：单独标出来，别混进「已播完」
+			entry.state = OFFLINE;
 		} else {
 			entry.state = DONE;
 		}

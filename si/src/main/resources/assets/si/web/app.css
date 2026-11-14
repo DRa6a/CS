@@ -854,6 +854,13 @@ input[type="search"]::-webkit-search-cancel-button {
 	border-color: rgba(255, 255, 255, .08);
 }
 
+/* 听着歌人走了：和「已切歌」一样是灰的，但带一点冷色提醒 */
+.badge.OFFLINE {
+	color: #a9b8d8;
+	background: rgba(140, 165, 220, .1);
+	border-color: rgba(140, 165, 220, .22);
+}
+
 .badge.FAILED {
 	color: #ffb4c4;
 	background: rgba(255, 120, 150, .14);

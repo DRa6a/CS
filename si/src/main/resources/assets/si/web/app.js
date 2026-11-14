@@ -594,6 +594,7 @@
 		PLAYING: '播放中',
 		DONE: '已播完',
 		SKIPPED: '已切歌',
+		OFFLINE: '已离线',
 		FAILED: '失败'
 	};
 

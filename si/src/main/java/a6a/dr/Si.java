@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 /**
  * Si —— 服务端点歌台。
@@ -90,8 +91,15 @@ public class Si implements ModInitializer {
 		});
 
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-			OnlineRegistry.remove(handler.getPlayer().getUUID());
-			PasswordSetup.cancel(handler.getPlayer().getUUID());
+			UUID uuid = handler.getPlayer().getUUID();
+			OnlineRegistry.remove(uuid);
+			PasswordSetup.cancel(uuid);
+			// 客户端走了就再也发不出状态回报，服务端自己把还挂着的条目收尾，
+			// 不然网页会一直显示「有玩家在播放」
+			int closed = SiCore.requests().listenerOffline(uuid);
+			if (closed > 0) {
+				LOGGER.info("{} 离开服务器，收尾 {} 条未播完的点歌记录", handler.getPlayer().getName().getString(), closed);
+			}
 		});
 
 		// 首次设置密码：聊天框输入，拦下这条消息不外发

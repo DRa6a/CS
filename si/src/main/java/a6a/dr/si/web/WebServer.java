@@ -913,6 +913,8 @@ public final class WebServer {
 				int sent = 0;
 				for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 					if (SiNetworking.canPlay(player)) {
+						// 先登记接收者：半路掉线的话服务端才知道这条该收尾
+						SiCore.requests().addListener(requestId, player.getUUID());
 						SiNetworking.sendPlay(player, requestId, url, title, artist, requester,
 								SiCore.volumeOf(player.getUUID()), true);
 						sent++;
@@ -932,6 +934,7 @@ public final class WebServer {
 				SiCore.requests().finish(requestId, RequestLog.FAILED, "客户端未安装 Cu 模组");
 				return;
 			}
+			SiCore.requests().addListener(requestId, target.getUUID());
 			SiNetworking.sendPlay(target, requestId, url, title, artist, requester,
 					SiCore.volumeOf(targetUuid), false);
 		});
