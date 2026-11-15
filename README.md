@@ -28,7 +28,7 @@ git clone https://github.com/DRa6a/CS.git
 | **Si** | `environment: server` | 内嵌 HTTP 服务；玩家网页登录、搜网易云、点歌；把请求推给目标玩家的客户端 |
 | **Cu** | `environment: client` | 下载音频、解码 MP3/WAV、按队列播放；播放时自动压掉游戏背景音乐 |
 
-- Minecraft **26.2** / Fabric Loader 0.20.1+ / Java **25** / Fabric API 0.161.0+26.2
+- Minecraft **26.2** / Fabric Loader 0.19.5+ / Java **25** / Fabric API 0.161.0+26.2
 - 服务端不用装 Cu，客户端不用装 Si，两者用 `si:*` 自定义数据包通信
 
 ---
