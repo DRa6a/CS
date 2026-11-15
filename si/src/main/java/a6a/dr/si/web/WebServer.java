@@ -6,6 +6,7 @@ import a6a.dr.si.SiCore;
 import a6a.dr.si.auth.AccountStore;
 import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.message.ChatService;
+import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
@@ -34,11 +35,17 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +65,9 @@ public final class WebServer {
 	private static final String COOKIE = "si_session";
 	private static final String ALL = "__all__";
 	private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+	/** 事件流里给前端一个现成的本地时间，省得每个客户端各写一遍 */
+	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss")
+			.withZone(ZoneId.systemDefault());
 	private static final Map<String, String> MIME = Map.of(
 			"html", "text/html; charset=utf-8",
 			"css", "text/css; charset=utf-8",
@@ -312,10 +322,14 @@ public final class WebServer {
 			case "/api/netease/logout" -> apiNeteaseLogout(exchange);
 			case "/api/players" -> apiPlayers(exchange);
 			case "/api/search" -> apiSearch(exchange);
+			case "/api/playlists" -> apiPlaylists(exchange);
+			case "/api/playlist" -> apiPlaylist(exchange);
+			case "/api/liked" -> apiLiked(exchange);
 			case "/api/request" -> apiRequest(exchange);
 			case "/api/entries" -> apiEntries(exchange);
 			case "/api/message" -> apiMessage(exchange);
 			case "/api/chat" -> apiChat(exchange);
+			case "/api/events" -> apiEvents(exchange);
 			case "/api/health" -> apiHealth(exchange);
 			default -> sendError(exchange, 404, "接口不存在");
 		}
@@ -654,39 +668,152 @@ public final class WebServer {
 		try {
 			String cookie = SiCore.netease().cookie(session.name());
 			List<MusicService.Song> songs = SiCore.music().search(keyword, 20, cookie);
-
-			// 批量查一次播放地址，顺便标出「可播 / 需要登录 / 无版权」
-			List<Long> ids = new java.util.ArrayList<>(songs.size());
-			for (MusicService.Song song : songs) ids.add(song.id());
-			Map<Long, MusicService.Resolved> resolved = SiCore.music().resolveUrls(ids, cookie);
-
-			JsonArray array = new JsonArray();
-			for (MusicService.Song song : songs) {
-				MusicService.Resolved state = resolved.get(song.id());
-				String playState = state == null ? "UNKNOWN"
-						: state.playable() ? "OK"
-						: state.needLogin() ? "LOGIN" : "NONE";
-				JsonObject item = new JsonObject();
-				item.addProperty("id", song.id());
-				item.addProperty("name", song.name());
-				item.addProperty("artist", song.artist());
-				item.addProperty("album", song.album());
-				item.addProperty("duration", song.durationMs());
-				item.addProperty("cover", song.cover());
-				item.addProperty("fee", song.fee());
-				item.addProperty("state", playState);
-				item.addProperty("url", state != null && state.playable()
-						? state.url()
-						: SiCore.music().outerUrl(song.id()));
-				array.add(item);
-			}
 			JsonObject body = ok();
-			body.add("songs", array);
+			body.add("songs", songsPayload(songs, cookie));
 			body.addProperty("neteaseBound", cookie != null);
 			sendJson(exchange, 200, body);
 		} catch (Exception e) {
 			sendError(exchange, 502, "网易云搜索失败：" + e.getMessage() + "（可以试试直接粘贴歌曲直链）");
 		}
+	}
+
+	/**
+	 * 歌曲数组 → JSON，顺便批量标出「可播 / 需要登录 / 无版权」。
+	 *
+	 * <p>搜索、歌单详情、我喜欢的音乐都用这一份，避免三处各写一遍。</p>
+	 */
+	private JsonArray songsPayload(List<MusicService.Song> songs, String cookie) {
+		JsonArray array = new JsonArray();
+		if (songs == null || songs.isEmpty()) return array;
+		List<Long> ids = new ArrayList<>(songs.size());
+		for (MusicService.Song song : songs) ids.add(song.id());
+		Map<Long, MusicService.Resolved> resolved = SiCore.music().resolveUrls(ids, cookie);
+		for (MusicService.Song song : songs) {
+			MusicService.Resolved state = resolved.get(song.id());
+			String playState = state == null ? "UNKNOWN"
+					: state.playable() ? "OK"
+					: state.needLogin() ? "LOGIN" : "NONE";
+			JsonObject item = new JsonObject();
+			item.addProperty("id", song.id());
+			item.addProperty("name", song.name());
+			item.addProperty("artist", song.artist());
+			item.addProperty("album", song.album());
+			item.addProperty("duration", song.durationMs());
+			item.addProperty("cover", song.cover());
+			item.addProperty("fee", song.fee());
+			item.addProperty("state", playState);
+			item.addProperty("url", state != null && state.playable()
+					? state.url()
+					: SiCore.music().outerUrl(song.id()));
+			array.add(item);
+		}
+		return array;
+	}
+
+	/** 搜歌单：GET /api/playlists?q=&limit= */
+	private void apiPlaylists(HttpExchange exchange) throws IOException {
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+		String keyword = queryParam(exchange, "q");
+		if (keyword.isBlank()) {
+			JsonObject body = ok();
+			body.add("playlists", new JsonArray());
+			sendJson(exchange, 200, body);
+			return;
+		}
+		int limit = intParam(exchange, "limit", 20, 1, 50);
+		try {
+			String cookie = SiCore.netease().cookie(session.name());
+			List<MusicService.Playlist> playlists = SiCore.music().searchPlaylists(keyword, limit, cookie);
+			JsonArray array = new JsonArray();
+			for (MusicService.Playlist playlist : playlists) {
+				array.add(playlistPayload(playlist));
+			}
+			JsonObject body = ok();
+			body.add("playlists", array);
+			body.addProperty("neteaseBound", cookie != null);
+			sendJson(exchange, 200, body);
+		} catch (Exception e) {
+			sendError(exchange, 502, "歌单搜索失败：" + e.getMessage());
+		}
+	}
+
+	/** 歌单详情：GET /api/playlist?id=&limit= */
+	private void apiPlaylist(HttpExchange exchange) throws IOException {
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+		long id = longParam(exchange, "id", 0);
+		if (id <= 0) {
+			sendError(exchange, 400, "缺少歌单 id");
+			return;
+		}
+		int limit = intParam(exchange, "limit", 100, 1, 500);
+		try {
+			String cookie = SiCore.netease().cookie(session.name());
+			MusicService.PlaylistDetail detail = SiCore.music().playlistDetail(id, cookie, limit);
+			JsonObject body = ok();
+			body.add("playlist", playlistPayload(detail.playlist()));
+			body.add("songs", songsPayload(detail.songs(), cookie));
+			body.addProperty("neteaseBound", cookie != null);
+			sendJson(exchange, 200, body);
+		} catch (Exception e) {
+			sendError(exchange, 502, "读取歌单失败：" + e.getMessage());
+		}
+	}
+
+	/** 我喜欢的音乐：GET /api/liked?limit=&offset=（需要绑定网易云） */
+	private void apiLiked(HttpExchange exchange) throws IOException {
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+		NeteaseStore.Entry entry = SiCore.netease() == null ? null : SiCore.netease().get(session.name());
+		if (entry == null || entry.musicU == null || entry.musicU.isBlank()) {
+			sendError(exchange, 400, "先在「账号设置 → 网易云账号」绑定，才能读我喜欢的音乐");
+			return;
+		}
+		// 老数据可能没存 uid（早期只存了 Cookie），现查一次补上
+		long uid = entry.uid;
+		if (uid <= 0) {
+			MusicService.Profile profile = SiCore.music().profile(entry.musicU);
+			if (profile != null && profile.uid() > 0) {
+				uid = profile.uid();
+				entry.uid = uid;
+				SiCore.netease().put(session.name(), entry);
+			}
+		}
+		int limit = intParam(exchange, "limit", 100, 1, 200);
+		int offset = intParam(exchange, "offset", 0, 0, 100_000);
+		try {
+			MusicService.Liked liked = SiCore.music().likedSongs(entry.musicU, uid, limit, offset);
+			JsonObject body = ok();
+			body.add("songs", songsPayload(liked.songs(), entry.musicU));
+			body.addProperty("offset", liked.offset());
+			body.addProperty("limit", limit);
+			body.addProperty("neteaseBound", true);
+			sendJson(exchange, 200, body);
+		} catch (IOException e) {
+			sendError(exchange, 400, e.getMessage());
+		}
+	}
+
+	private JsonObject playlistPayload(MusicService.Playlist playlist) {
+		JsonObject item = new JsonObject();
+		item.addProperty("id", playlist.id());
+		item.addProperty("name", playlist.name());
+		item.addProperty("cover", playlist.cover());
+		item.addProperty("trackCount", playlist.trackCount());
+		item.addProperty("creator", playlist.creator());
+		item.addProperty("playCount", playlist.playCount());
+		item.addProperty("description", playlist.description());
+		return item;
 	}
 
 	private void apiRequest(HttpExchange exchange) throws IOException {
@@ -910,6 +1037,7 @@ public final class WebServer {
 		}
 
 		ChatService.Line line = SiCore.chat().add(session.name(), text, ChatService.WEB);
+		SiCore.events().add(EventLog.WEB, session.name(), text);
 		messageCooldowns.put(cooldownKey, now);
 
 		final UUID uuid = targetUuid;
@@ -948,6 +1076,60 @@ public final class WebServer {
 		JsonObject body = ok();
 		body.add("messages", array);
 		body.addProperty("maxLength", ChatService.MAX_LENGTH);
+		sendJsonCacheable(exchange, body);
+	}
+
+	/**
+	 * 事件流：GET /api/events?since=&limit=&types=
+	 *
+	 * <p>聊天、进服、离服、死亡、执行命令都在这条流里，每条带 {@code at}（毫秒）和
+	 * {@code time}（HH:mm:ss）。客户端拿响应里的 {@code latest} 当下次的 {@code since}，
+	 * 就只回新增的那几条。</p>
+	 *
+	 * <p>记录哪几类由 {@code si.json} 的 {@code eventTypes} 决定，关掉的类型不会出现在这里。</p>
+	 */
+	private void apiEvents(HttpExchange exchange) throws IOException {
+		SessionStore.Session session = session(exchange);
+		if (session == null) {
+			sendError(exchange, 401, "请先登录");
+			return;
+		}
+		long since = longParam(exchange, "since", 0);
+		int limit = intParam(exchange, "limit", 100, 1, 400);
+
+		Set<String> types = new LinkedHashSet<>();
+		String raw = queryParam(exchange, "types");
+		if (!raw.isBlank()) {
+			for (String part : raw.split(",")) {
+				String value = part.trim().toLowerCase(Locale.ROOT);
+				if (!value.isEmpty()) types.add(value);
+			}
+		}
+
+		EventLog log = SiCore.events();
+		JsonArray array = new JsonArray();
+		for (EventLog.Event event : log.recent(limit, since, types)) {
+			JsonObject item = new JsonObject();
+			item.addProperty("id", event.id);
+			item.addProperty("at", event.at);
+			item.addProperty("time", TIME.format(Instant.ofEpochMilli(event.at)));
+			item.addProperty("type", event.type);
+			item.addProperty("player", event.player);
+			item.addProperty("text", event.text);
+			if (event.detail != null && !event.detail.isBlank()) {
+				item.addProperty("detail", event.detail);
+			}
+			array.add(item);
+		}
+
+		JsonArray recorded = new JsonArray();
+		for (String type : log.types()) recorded.add(type);
+
+		JsonObject body = ok();
+		body.add("events", array);
+		body.addProperty("latest", log.latest());
+		body.addProperty("enabled", !log.types().isEmpty());
+		body.add("recorded", recorded);
 		sendJsonCacheable(exchange, body);
 	}
 
@@ -1138,6 +1320,28 @@ public final class WebServer {
 			return object.get(key).getAsLong();
 		} catch (Exception e) {
 			return 0L;
+		}
+	}
+
+	/** 整数查询参数，越界自动夹到 [min, max]，解析失败用默认值 */
+	private static int intParam(HttpExchange exchange, String key, int fallback, int min, int max) {
+		String raw = queryParam(exchange, key);
+		if (raw == null || raw.isBlank()) return fallback;
+		try {
+			int value = Integer.parseInt(raw.trim());
+			return Math.max(min, Math.min(max, value));
+		} catch (NumberFormatException e) {
+			return fallback;
+		}
+	}
+
+	private static long longParam(HttpExchange exchange, String key, long fallback) {
+		String raw = queryParam(exchange, key);
+		if (raw == null || raw.isBlank()) return fallback;
+		try {
+			return Long.parseLong(raw.trim());
+		} catch (NumberFormatException e) {
+			return fallback;
 		}
 	}
 

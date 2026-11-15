@@ -76,6 +76,16 @@ public final class SiConfig {
 	 * token 由 {@code POST /api/login} 返回。关掉后只认 Cookie（等于禁止外部接入）。</p>
 	 */
 	public boolean tokenAuth = true;
+	/** 事件流总开关：关掉后 /api/events 恒为空 */
+	public boolean eventsEnabled = true;
+	/**
+	 * 记录哪些事件，可选 {@code chat}（游戏聊天）、{@code web}（网页消息）、
+	 * {@code join}（进服）、{@code quit}（离服）、{@code death}（死亡）、{@code command}（执行命令）。
+	 * 删掉某一项就不记那类，比如不想暴露玩家执行的命令就把 command 去掉。
+	 */
+	public List<String> eventTypes = new ArrayList<>(List.of("chat", "web", "join", "quit", "death", "command"));
+	/** 事件环形缓冲保留多少条 */
+	public int eventHistorySize = 400;
 
 	public static Path file() {
 		return FabricLoader.getInstance().getConfigDir().resolve("si.json");
@@ -135,6 +145,9 @@ public final class SiConfig {
 			cleaned.add(value);
 		}
 		corsOrigins = cleaned;
+		if (eventTypes == null) eventTypes = new ArrayList<>();
+		if (eventHistorySize < 50) eventHistorySize = 400;
+		if (eventHistorySize > 5000) eventHistorySize = 5000;
 	}
 
 	public void save() {

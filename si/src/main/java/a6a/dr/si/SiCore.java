@@ -4,6 +4,7 @@ import a6a.dr.Si;
 import a6a.dr.si.auth.AccountStore;
 import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.message.ChatService;
+import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
@@ -31,6 +32,7 @@ public final class SiCore {
 	private static NeteaseStore netease;
 	private static FallbackSource fallback;
 	private static ChatService chat;
+	private static EventLog events;
 
 	public static volatile MinecraftServer server;
 	public static volatile WebServer web;
@@ -46,7 +48,7 @@ public final class SiCore {
 
 	public static void init(SiConfig cfg, AccountStore acc, SessionStore sess, MusicService mus,
 							RequestLog req, NeteaseStore neteaseStore, FallbackSource fallbackSource,
-							ChatService chatService) {
+							ChatService chatService, EventLog eventLog) {
 		config = cfg;
 		accounts = acc;
 		sessions = sess;
@@ -55,6 +57,11 @@ public final class SiCore {
 		netease = neteaseStore;
 		fallback = fallbackSource;
 		chat = chatService;
+		events = eventLog;
+	}
+
+	public static EventLog events() {
+		return events;
 	}
 
 	public static ChatService chat() {

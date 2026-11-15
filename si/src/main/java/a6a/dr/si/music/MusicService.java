@@ -33,6 +33,19 @@ public final class MusicService {
 	public record Song(long id, String name, String artist, String album, long durationMs, String cover, int fee) {
 	}
 
+	/** 歌单摘要（搜索结果 / 详情头部） */
+	public record Playlist(long id, String name, String cover, int trackCount, String creator,
+						   long playCount, String description) {
+	}
+
+	/** 歌单详情：头部信息 + 前若干首（网易云只给前 1000 首，这里再截一次） */
+	public record PlaylistDetail(Playlist playlist, List<Song> songs) {
+	}
+
+	/** 我喜欢的音乐：当前窗口内的歌曲 */
+	public record Liked(List<Song> songs, int offset) {
+	}
+
 	public record Probe(boolean ok, int status, String contentType, long length, String finalUrl, String error) {
 	}
 
@@ -72,6 +85,10 @@ public final class MusicService {
 	private final TtlCache<String, List<Song>> searchCache = new TtlCache<>(128, 5 * 60_000L);
 	private final TtlCache<String, Resolved> resolveCache = new TtlCache<>(512, 3 * 60_000L);
 	private final TtlCache<String, Probe> probeCache = new TtlCache<>(256, 3 * 60_000L);
+	private final TtlCache<String, List<Playlist>> playlistSearchCache = new TtlCache<>(64, 5 * 60_000L);
+	private final TtlCache<String, PlaylistDetail> playlistCache = new TtlCache<>(32, 5 * 60_000L);
+	/** 我喜欢的音乐：短缓存，刚点过赞的能马上看到 */
+	private final TtlCache<String, Liked> likedCache = new TtlCache<>(16, 60_000L);
 
 	public MusicService() {
 		this(10);
@@ -181,6 +198,231 @@ public final class MusicService {
 			}
 		}
 		return fallback;
+	}
+
+	// ------------------------------------------------------------ 歌单
+
+	/** 搜歌单（网易云 type=1000） */
+	public List<Playlist> searchPlaylists(String keyword, int limit, String musicU) throws IOException {
+		String query = keyword == null ? "" : keyword.trim();
+		if (query.isEmpty()) return List.of();
+		int size = Math.min(Math.max(limit, 1), 50);
+		String cacheKey = query.toLowerCase(Locale.ROOT) + "|" + size + cookieTag(musicU);
+		List<Playlist> cached = playlistSearchCache.get(cacheKey);
+		if (cached != null) return cached;
+
+		String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
+		Map<String, String> headers = musicHeaders(musicU);
+		List<String> endpoints = List.of(
+				"https://music.163.com/api/search/get/web?csrf_token=&s=" + encoded
+						+ "&type=1000&offset=0&total=true&limit=" + size,
+				"https://music.163.com/api/search/get?s=" + encoded
+						+ "&type=1000&offset=0&limit=" + size
+		);
+
+		IOException last = null;
+		for (String endpoint : endpoints) {
+			try {
+				Response response = request(endpoint, "GET", headers, 3, 4 * 1024 * 1024);
+				if (response.status != 200) throw new IOException("HTTP " + response.status);
+				List<Playlist> playlists = parsePlaylists(new String(response.body, StandardCharsets.UTF_8));
+				if (playlists != null) {
+					playlistSearchCache.put(cacheKey, playlists);
+					return playlists;
+				}
+			} catch (IOException e) {
+				last = e;
+			}
+		}
+		throw last != null ? last : new IOException("网易云没有返回可解析的歌单");
+	}
+
+	private List<Playlist> parsePlaylists(String body) {
+		JsonObject root = parse(body);
+		if (root == null || !root.has("result") || !root.get("result").isJsonObject()) return null;
+		JsonObject result = root.getAsJsonObject("result");
+		if (!result.has("playlists") || !result.get("playlists").isJsonArray()) return null;
+		List<Playlist> list = new ArrayList<>();
+		for (JsonElement element : result.getAsJsonArray("playlists")) {
+			if (!element.isJsonObject()) continue;
+			Playlist playlist = playlistOf(element.getAsJsonObject());
+			if (playlist.id() > 0) list.add(playlist);
+		}
+		return list;
+	}
+
+	/** 歌单详情（含前若干首歌） */
+	public PlaylistDetail playlistDetail(long id, String musicU, int limit) throws IOException {
+		if (id <= 0) throw new IOException("缺少歌单 id");
+		int keep = Math.min(Math.max(limit, 1), 500);
+		String cacheKey = id + "|" + keep + cookieTag(musicU);
+		PlaylistDetail cached = playlistCache.get(cacheKey);
+		if (cached != null) return cached;
+
+		// v6 给的数据最全，老接口兜底（个别歌单只有其中一个能拿到）
+		List<String> endpoints = List.of(
+				"https://music.163.com/api/v6/playlist/detail?id=" + id + "&n=1000&s=0",
+				"https://music.163.com/api/playlist/detail?id=" + id
+		);
+		IOException last = null;
+		for (String endpoint : endpoints) {
+			try {
+				Response response = request(endpoint, "GET", musicHeaders(musicU), 3, 8 * 1024 * 1024);
+				if (response.status != 200) throw new IOException("HTTP " + response.status);
+				PlaylistDetail detail = parsePlaylistDetail(new String(response.body, StandardCharsets.UTF_8), keep);
+				if (detail != null) {
+					playlistCache.put(cacheKey, detail);
+					return detail;
+				}
+			} catch (IOException e) {
+				last = e;
+			}
+		}
+		throw last != null ? last : new IOException("歌单不存在或无权访问");
+	}
+
+	private PlaylistDetail parsePlaylistDetail(String body, int limit) {
+		JsonObject root = parse(body);
+		if (root == null) return null;
+		JsonObject object = null;
+		if (root.has("playlist") && root.get("playlist").isJsonObject()) {
+			object = root.getAsJsonObject("playlist");
+		} else if (root.has("result") && root.get("result").isJsonObject()) {
+			object = root.getAsJsonObject("result");
+		}
+		if (object == null) return null;
+		Playlist playlist = playlistOf(object);
+		if (playlist.id() <= 0) return null;
+		JsonArray tracks = object.has("tracks") && object.get("tracks").isJsonArray()
+				? object.getAsJsonArray("tracks")
+				: new JsonArray();
+		List<Song> songs = parseTracks(tracks);
+		if (songs.size() > limit) songs = new ArrayList<>(songs.subList(0, limit));
+		return new PlaylistDetail(playlist, songs);
+	}
+
+	/**
+	 * 我喜欢的音乐。
+	 *
+	 * <p>like/get 只回 id 列表，歌曲信息要再查一次 song/detail；
+	 * 没有绑定账号时这里会抛异常，由调用方转成 400。</p>
+	 */
+	public Liked likedSongs(String musicU, long uid, int limit, int offset) throws IOException {
+		if (musicU == null || musicU.isBlank()) throw new IOException("还没有绑定网易云账号");
+		if (uid <= 0) throw new IOException("缺少网易云 uid，请重新绑定一次账号");
+		int size = Math.min(Math.max(limit, 1), 200);
+		int skip = Math.max(offset, 0);
+
+		String cacheKey = uid + "|" + size + "|" + skip + cookieTag(musicU);
+		Liked cached = likedCache.get(cacheKey);
+		if (cached != null) return cached;
+
+		String url = "https://music.163.com/api/song/like/get?uid=" + uid
+				+ "&limit=" + size + "&offset=" + skip;
+		Response response = request(url, "GET", musicHeaders(musicU), 3, 2 * 1024 * 1024);
+		if (response.status != 200) throw new IOException("HTTP " + response.status);
+		JsonObject root = parse(new String(response.body, StandardCharsets.UTF_8));
+		if (root == null) throw new IOException("网易云返回异常");
+		int code = root.has("code") ? root.get("code").getAsInt() : 200;
+		if (code != 200) throw new IOException("读取喜欢的音乐失败（code " + code + "），登录态可能已过期");
+
+		JsonArray ids = root.has("ids") && root.get("ids").isJsonArray()
+				? root.getAsJsonArray("ids")
+				: new JsonArray();
+		List<Long> idList = new ArrayList<>(ids.size());
+		for (JsonElement element : ids) {
+			try {
+				long id = element.getAsLong();
+				if (id > 0) idList.add(id);
+			} catch (Exception ignored) {
+			}
+		}
+		List<Song> songs = idList.isEmpty() ? List.of() : songsByIds(idList, musicU);
+		Liked liked = new Liked(songs, skip);
+		likedCache.put(cacheKey, liked);
+		return liked;
+	}
+
+	/** 按 id 批量取歌曲详情，200 首一批 */
+	public List<Song> songsByIds(List<Long> ids, String musicU) throws IOException {
+		List<Song> songs = new ArrayList<>(ids.size());
+		int batch = 200;
+		for (int start = 0; start < ids.size(); start += batch) {
+			List<Long> slice = ids.subList(start, Math.min(ids.size(), start + batch));
+			StringBuilder param = new StringBuilder();
+			for (Long id : slice) {
+				if (param.length() > 0) param.append(',');
+				param.append(id);
+			}
+			String url = "https://music.163.com/api/song/detail?ids=%5B" + param + "%5D";
+			Response response = request(url, "GET", musicHeaders(musicU), 3, 8 * 1024 * 1024);
+			if (response.status != 200) throw new IOException("HTTP " + response.status);
+			JsonObject root = parse(new String(response.body, StandardCharsets.UTF_8));
+			if (root == null || !root.has("songs") || !root.get("songs").isJsonArray()) continue;
+			songs.addAll(parseTracks(root.getAsJsonArray("songs")));
+		}
+		return songs;
+	}
+
+	/**
+	 * 解析歌曲数组，兼容两套字段名：
+	 * v3 / v6 用 {@code ar / al / dt}，老的搜索接口用 {@code artists / album / duration}。
+	 */
+	private List<Song> parseTracks(JsonArray array) {
+		List<Song> list = new ArrayList<>(array.size());
+		for (JsonElement element : array) {
+			if (!element.isJsonObject()) continue;
+			JsonObject song = element.getAsJsonObject();
+			long id = longOf(song, "id");
+			if (id <= 0) continue;
+
+			StringBuilder artists = new StringBuilder();
+			JsonArray artistArray = song.has("ar") && song.get("ar").isJsonArray()
+					? song.getAsJsonArray("ar")
+					: (song.has("artists") && song.get("artists").isJsonArray()
+					? song.getAsJsonArray("artists") : null);
+			if (artistArray != null) {
+				for (JsonElement artist : artistArray) {
+					if (!artist.isJsonObject()) continue;
+					if (artists.length() > 0) artists.append(" / ");
+					artists.append(string(artist.getAsJsonObject(), "name", "未知歌手"));
+				}
+			}
+			if (artists.length() == 0) artists.append("未知歌手");
+
+			String album = "";
+			String cover = null;
+			JsonObject albumObject = song.has("al") && song.get("al").isJsonObject()
+					? song.getAsJsonObject("al")
+					: (song.has("album") && song.get("album").isJsonObject()
+					? song.getAsJsonObject("album") : null);
+			if (albumObject != null) {
+				album = string(albumObject, "name", "");
+				cover = string(albumObject, "picUrl", null);
+			}
+
+			long duration = song.has("dt") ? longOf(song, "dt") : longOf(song, "duration");
+			int fee = song.has("fee") ? song.get("fee").getAsInt() : 0;
+			list.add(new Song(id, string(song, "name", "未知歌曲"), artists.toString(), album, duration, cover, fee));
+		}
+		return list;
+	}
+
+	private static Playlist playlistOf(JsonObject object) {
+		String creator = object.has("creator") && object.get("creator").isJsonObject()
+				? string(object.getAsJsonObject("creator"), "nickname", "")
+				: "";
+		int trackCount = object.has("trackCount") && !object.get("trackCount").isJsonNull()
+				? object.get("trackCount").getAsInt() : 0;
+		return new Playlist(
+				longOf(object, "id"),
+				string(object, "name", "未命名歌单"),
+				string(object, "coverImgUrl", null),
+				trackCount,
+				creator,
+				longOf(object, "playCount"),
+				string(object, "description", "")
+		);
 	}
 
 	// -------------------------------------------------------------- 账号

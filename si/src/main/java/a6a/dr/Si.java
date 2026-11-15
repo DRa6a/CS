@@ -7,6 +7,7 @@ import a6a.dr.si.auth.PasswordSetup;
 import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.command.SiCommand;
 import a6a.dr.si.message.ChatService;
+import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
@@ -17,15 +18,19 @@ import a6a.dr.si.player.SiJoinHandler;
 import a6a.dr.si.web.WebServer;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -51,7 +56,8 @@ public class Si implements ModInitializer {
 				new NeteaseStore(dir.resolve("netease.json")),
 				new FallbackSource(config.fallbackEnabled, config.fallbackUrlTemplate,
 						config.fallbackJsonField, config.searchTimeoutSeconds),
-				new ChatService(200)
+				new ChatService(200),
+				new EventLog(config.eventHistorySize, config.eventsEnabled ? config.eventTypes : List.of())
 		);
 
 		SiNetworking.register();
@@ -88,17 +94,20 @@ public class Si implements ModInitializer {
 			} catch (Exception e) {
 				LOGGER.warn("处理玩家进入事件失败", e);
 			}
+			SiCore.events().add(EventLog.JOIN, handler.getPlayer().getName().getString(), "加入了服务器");
 		});
 
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
 			UUID uuid = handler.getPlayer().getUUID();
+			String name = handler.getPlayer().getName().getString();
 			OnlineRegistry.remove(uuid);
 			PasswordSetup.cancel(uuid);
+			SiCore.events().add(EventLog.QUIT, name, "离开了服务器");
 			// 客户端走了就再也发不出状态回报，服务端自己把还挂着的条目收尾，
 			// 不然网页会一直显示「有玩家在播放」
 			int closed = SiCore.requests().listenerOffline(uuid);
 			if (closed > 0) {
-				LOGGER.info("{} 离开服务器，收尾 {} 条未播完的点歌记录", handler.getPlayer().getName().getString(), closed);
+				LOGGER.info("{} 离开服务器，收尾 {} 条未播完的点歌记录", name, closed);
 			}
 		});
 
@@ -119,7 +128,32 @@ public class Si implements ModInitializer {
 		ServerMessageEvents.CHAT_MESSAGE.register((message, player, bound) -> {
 			String text = message.signedContent();
 			if (text == null || text.isBlank()) return;
-			SiCore.chat().add(player.getName().getString(), text, ChatService.GAME);
+			String name = player.getName().getString();
+			SiCore.chat().add(name, text, ChatService.GAME);
+			SiCore.events().add(EventLog.CHAT, name, text);
+		});
+
+		// 玩家执行命令（含 /me、/msg 这类）：记下来，方便网页做审计或高亮
+		ServerMessageEvents.COMMAND_MESSAGE.register((message, source, bound) -> {
+			String text = message.signedContent();
+			if (text == null || text.isBlank()) return;
+			ServerPlayer player = source.getPlayer();
+			String name = player != null ? player.getName().getString() : source.getTextName();
+			if (!text.startsWith("/")) text = "/" + text;
+			SiCore.events().add(EventLog.COMMAND, name, text, player != null ? "player" : "server");
+		});
+
+		// 死亡：只关心玩家，怪物死一片没意义
+		ServerLivingEntityEvents.AFTER_DEATH.register((entity, damage) -> {
+			if (!(entity instanceof ServerPlayer player)) return;
+			Entity killer = damage.getEntity();
+			String text;
+			if (killer != null && !killer.getUUID().equals(player.getUUID())) {
+				text = "被 " + killer.getName().getString() + " 击杀";
+			} else {
+				text = "死亡";
+			}
+			SiCore.events().add(EventLog.DEATH, player.getName().getString(), text, damage.getMsgId());
 		});
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registry, selection) -> SiCommand.register(dispatcher));

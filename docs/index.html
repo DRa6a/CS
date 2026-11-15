@@ -192,6 +192,32 @@
   table.api th { color: var(--muted); font-weight: 500; }
   table.api td:first-child { white-space: nowrap; color: var(--muted); }
 
+  /* ---------------------------------------------------------- 分段 / 筛选 */
+  .tabs { display: flex; gap: 4px; background: var(--panel-2); padding: 3px; border-radius: 9px; border: 1px solid var(--line); }
+  .tab {
+    background: transparent; border: 0; padding: 5px 12px; border-radius: 7px;
+    font-size: 12.5px; color: var(--muted);
+  }
+  .tab.active { background: var(--accent-soft); color: var(--text); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip {
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+    padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  }
+  .chip.active { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+
+  .events .item { align-items: baseline; }
+  .events .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .events .badge { flex: 0 0 auto; }
+  .events .who { flex: 0 0 auto; }
+  .events .what { flex: 1; min-width: 0; word-break: break-word; }
+
+  .pl-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+  .pl-head img, .pl-head .cover { width: 56px; height: 56px; border-radius: 9px; object-fit: cover; background: #1d2432; }
+  .pl-head .t { font-size: 14px; }
+  .pl-head .s { color: var(--muted); font-size: 12px; }
+
   /* ---------------------------------------------------------- toast */
   #toast {
     position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 20px);
@@ -323,6 +349,59 @@
     </section>
   </div>
 
+  <!-- ======================================================= 歌单 -->
+  <section class="card">
+    <header>
+      <h2>歌单 · 我喜欢的 <small>GET /api/playlists · /api/playlist · /api/liked</small></h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="search">搜歌单</button>
+        <button class="tab" data-tab="liked">我喜欢的</button>
+      </div>
+    </header>
+
+    <div id="plSearchPane">
+      <div class="row">
+        <input id="plQuery" placeholder="歌单名 / 关键词，回车搜索" spellcheck="false">
+        <button id="btnPlSearch" class="ghost">搜索歌单</button>
+      </div>
+      <div id="playlists" class="songs"><div class="empty">输入关键词搜歌单</div></div>
+    </div>
+
+    <div id="plDetailPane" class="hidden">
+      <div class="row" style="justify-content:space-between">
+        <button id="btnPlBack" class="tiny ghost">← 返回歌单列表</button>
+        <span id="plMeta" class="hint"></span>
+      </div>
+      <div id="plHead" class="pl-head"></div>
+      <div id="plSongs" class="songs"></div>
+    </div>
+
+    <div id="likedPane" class="hidden">
+      <div class="row" style="justify-content:space-between">
+        <span class="hint">需要先在「账号设置 → 网易云账号」绑定</span>
+        <button id="btnLiked" class="tiny ghost">加载我喜欢的</button>
+      </div>
+      <div id="likedSongs" class="songs"><div class="empty">点右上角加载</div></div>
+    </div>
+  </section>
+
+  <!-- ======================================================= 事件流 -->
+  <section class="card">
+    <header>
+      <h2>事件流 <small>GET /api/events · 每条带时间戳</small></h2>
+      <span id="eventPill" class="pill">—</span>
+    </header>
+    <div class="chips" id="eventChips">
+      <button class="chip active" data-type="chat">聊天</button>
+      <button class="chip active" data-type="web">网页消息</button>
+      <button class="chip active" data-type="join">进服</button>
+      <button class="chip active" data-type="quit">离服</button>
+      <button class="chip active" data-type="death">死亡</button>
+      <button class="chip active" data-type="command">命令</button>
+    </div>
+    <div id="events" class="list events"><div class="empty">登录后自动刷新</div></div>
+  </section>
+
   <!-- ======================================================= 记录 -->
   <section class="card">
     <header>
@@ -353,10 +432,14 @@
         <tr><td>POST /api/password</td><td>改网页密码</td><td><code>{oldPassword, newPassword}</code></td></tr>
         <tr><td>GET /api/players</td><td>在线玩家，含是否装了 Cu</td><td>—</td></tr>
         <tr><td>GET /api/search?q=</td><td>搜网易云，带可播状态</td><td>—</td></tr>
+        <tr><td>GET /api/playlists?q=</td><td>搜歌单</td><td>—</td></tr>
+        <tr><td>GET /api/playlist?id=</td><td>歌单详情（含前 100 首）</td><td>—</td></tr>
+        <tr><td>GET /api/liked?limit=&offset=</td><td>我喜欢的音乐（需绑定网易云）</td><td>—</td></tr>
         <tr><td>POST /api/request</td><td>点歌</td><td><code>{id, name, artist, url, target}</code></td></tr>
         <tr><td>GET /api/entries</td><td>最近点歌与状态</td><td>—</td></tr>
         <tr><td>POST /api/message</td><td>发消息进游戏聊天栏</td><td><code>{target, text}</code></td></tr>
         <tr><td>GET /api/chat</td><td>游戏内对话镜像</td><td>—</td></tr>
+        <tr><td>GET /api/events?since=&types=</td><td>事件流：聊天/进服/离服/死亡/命令，带时间戳</td><td>—</td></tr>
         <tr><td>GET /api/netease/status</td><td>网易云绑定状态</td><td>—</td></tr>
         <tr><td>POST /api/netease/qr</td><td>申请扫码二维码（base64 PNG）</td><td>—</td></tr>
         <tr><td>GET /api/netease/qr/poll?key=</td><td>轮询扫码状态</td><td>—</td></tr>
@@ -392,8 +475,11 @@
     server: null,
     players: [],
     songs: [],
+    playlists: [],
     entries: [],
     messages: [],
+    events: [],
+    eventSince: 0,
     logs: [],
     maxLength: 120,
     searchAbort: null,
@@ -401,6 +487,7 @@
     entriesTimer: null,
     chatTimer: null,
     playerTimer: null,
+    eventTimer: null,
     lastEntries: '',
     lastChat: ''
   };
@@ -628,7 +715,7 @@
   }
 
   async function afterLogin() {
-    await Promise.all([refreshPlayers(), refreshEntries(), refreshChat()]);
+    await Promise.all([refreshPlayers(), refreshEntries(), refreshChat(), refreshEvents(true)]);
     startPolling();
   }
 
@@ -636,9 +723,12 @@
     try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 忽略 */ }
     clearSession();
     state.songs = [];
+    state.playlists = [];
     state.entries = [];
     state.messages = [];
-    renderSongs(); renderEntries(); renderChat();
+    state.events = [];
+    state.eventSince = 0;
+    renderSongs(); renderPlaylists(); renderEntries(); renderChat(); renderEvents();
     toast('已退出', 'ok');
   }
 
@@ -726,13 +816,17 @@
 
   // ---------------------------------------------------------------- 搜歌
   function renderSongs() {
-    const box = $('songs');
+    renderSongList($('songs'), state.songs, '没有结果');
+  }
+
+  /** 歌曲列表通用渲染：搜索结果、歌单详情、我喜欢的都用这一份 */
+  function renderSongList(box, songs, emptyText) {
     box.textContent = '';
-    if (!state.songs.length) {
-      box.innerHTML = '<div class="empty">没有结果</div>';
+    if (!songs || !songs.length) {
+      box.innerHTML = '<div class="empty">' + (emptyText || '没有结果') + '</div>';
       return;
     }
-    for (const song of state.songs) {
+    for (const song of songs) {
       const row = document.createElement('div');
       row.className = 'song';
 
@@ -780,6 +874,198 @@
       button.onclick = () => requestSong(song, button);
       tail.appendChild(button);
       row.appendChild(tail);
+
+      box.appendChild(row);
+    }
+  }
+
+  // ---------------------------------------------------------------- 歌单
+
+  function fmtCount(value) {
+    if (!value) return '';
+    if (value >= 100000000) return (value / 100000000).toFixed(1) + ' 亿';
+    if (value >= 10000) return (value / 10000).toFixed(1) + ' 万';
+    return String(value);
+  }
+
+  function renderPlaylists() {
+    const box = $('playlists');
+    box.textContent = '';
+    if (!state.playlists.length) {
+      box.innerHTML = '<div class="empty">没有找到歌单</div>';
+      return;
+    }
+    for (const playlist of state.playlists) {
+      const row = document.createElement('div');
+      row.className = 'song';
+
+      const cover = document.createElement('img');
+      cover.loading = 'lazy';
+      cover.alt = '';
+      if (playlist.cover) {
+        cover.src = playlist.cover;
+        cover.onerror = () => { cover.style.visibility = 'hidden'; };
+      } else {
+        cover.style.visibility = 'hidden';
+      }
+      row.appendChild(cover);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = playlist.name;
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = (playlist.creator || '未知作者') + ' · ' + (playlist.trackCount || 0) + ' 首'
+        + (playlist.playCount ? ' · 播放 ' + fmtCount(playlist.playCount) : '');
+      meta.appendChild(name);
+      meta.appendChild(sub);
+      row.appendChild(meta);
+
+      const tail = document.createElement('div');
+      tail.className = 'tail';
+      const button = document.createElement('button');
+      button.className = 'tiny ghost';
+      button.textContent = '打开';
+      button.onclick = () => openPlaylist(playlist);
+      tail.appendChild(button);
+      row.appendChild(tail);
+
+      box.appendChild(row);
+    }
+  }
+
+  async function searchPlaylists() {
+    const query = $('plQuery').value.trim();
+    if (!query) { state.playlists = []; renderPlaylists(); return; }
+    if (!state.token) { toast('先登录', 'error'); return; }
+    try {
+      const data = await api('/api/playlists?q=' + encodeURIComponent(query) + '&limit=20');
+      state.playlists = data.playlists || [];
+      renderPlaylists();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function openPlaylist(playlist) {
+    if (!state.token) { toast('先登录', 'error'); return; }
+    try {
+      const data = await api('/api/playlist?id=' + playlist.id + '&limit=100');
+      const info = data.playlist || playlist;
+      $('plSearchPane').classList.add('hidden');
+      $('plDetailPane').classList.remove('hidden');
+      $('plMeta').textContent = (info.trackCount || 0) + ' 首 · 这里显示 ' + (data.songs || []).length + ' 首';
+
+      const head = $('plHead');
+      head.textContent = '';
+      const cover = document.createElement('img');
+      if (info.cover) cover.src = info.cover;
+      cover.onerror = () => { cover.style.visibility = 'hidden'; };
+      head.appendChild(cover);
+      const text = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 't';
+      title.textContent = info.name || '歌单';
+      const sub = document.createElement('div');
+      sub.className = 's';
+      sub.textContent = (info.creator || '未知作者') + (info.description ? ' · ' + info.description.slice(0, 60) : '');
+      text.appendChild(title);
+      text.appendChild(sub);
+      head.appendChild(text);
+
+      renderSongList($('plSongs'), data.songs || [], '这个歌单没有歌');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function loadLiked() {
+    if (!state.token) { toast('先登录', 'error'); return; }
+    const button = $('btnLiked');
+    button.disabled = true;
+    try {
+      const data = await api('/api/liked?limit=100');
+      renderSongList($('likedSongs'), data.songs || [], '喜欢的列表是空的');
+      toast('已加载 ' + (data.songs || []).length + ' 首', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  // ---------------------------------------------------------------- 事件
+
+  const EVENT_LABEL = { chat: '聊天', web: '网页', join: '进服', quit: '离服', death: '死亡', command: '命令' };
+  const EVENT_CLASS = { chat: 'ok', web: '', join: 'warn', quit: '', death: 'bad', command: 'warn' };
+
+  function activeEventTypes() {
+    return Array.from(document.querySelectorAll('#eventChips .chip.active')).map((chip) => chip.dataset.type);
+  }
+
+  async function refreshEvents(reset) {
+    if (!state.token) return;
+    if (reset) {
+      state.events = [];
+      state.eventSince = 0;
+      renderEvents();
+    }
+    const types = activeEventTypes();
+    if (!types.length) {
+      $('eventPill').textContent = '未选类型';
+      return;
+    }
+    try {
+      const data = await api('/api/events?limit=100&since=' + state.eventSince
+        + '&types=' + encodeURIComponent(types.join(',')));
+      if (data.notModified) return;
+      const list = data.events || [];
+      if (list.length) {
+        state.events = state.events.concat(list).slice(-200);
+        state.eventSince = Math.max(state.eventSince, data.latest || 0);
+        renderEvents();
+      }
+      $('eventPill').textContent = data.enabled === false
+        ? '服务端已关闭'
+        : state.events.length + ' 条';
+    } catch (e) {
+      // 轮询失败不打扰，下一轮再试
+    }
+  }
+
+  function renderEvents() {
+    const box = $('events');
+    box.textContent = '';
+    if (!state.events.length) {
+      box.innerHTML = '<div class="empty">还没有事件</div>';
+      return;
+    }
+    // 新的在上面
+    for (const event of state.events.slice().reverse()) {
+      const row = document.createElement('div');
+      row.className = 'item';
+
+      const time = document.createElement('span');
+      time.className = 't';
+      time.textContent = event.time || fmtTime(event.at);
+      row.appendChild(time);
+
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (EVENT_CLASS[event.type] || '');
+      badge.textContent = EVENT_LABEL[event.type] || event.type;
+      row.appendChild(badge);
+
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = event.player || '';
+      row.appendChild(who);
+
+      const what = document.createElement('span');
+      what.className = 'what';
+      what.textContent = event.text || '';
+      row.appendChild(what);
 
       box.appendChild(row);
     }
@@ -999,13 +1285,15 @@
     state.entriesTimer = setInterval(() => { if (!document.hidden) refreshEntries(); }, 3000);
     state.chatTimer = setInterval(() => { if (!document.hidden) refreshChat(); }, 3000);
     state.playerTimer = setInterval(() => { if (!document.hidden) refreshPlayers(); }, 8000);
+    state.eventTimer = setInterval(() => { if (!document.hidden) refreshEvents(false); }, 3000);
   }
 
   function stopPolling() {
     clearInterval(state.entriesTimer);
     clearInterval(state.chatTimer);
     clearInterval(state.playerTimer);
-    state.entriesTimer = state.chatTimer = state.playerTimer = null;
+    clearInterval(state.eventTimer);
+    state.entriesTimer = state.chatTimer = state.playerTimer = state.eventTimer = null;
   }
 
   // ---------------------------------------------------------------- 事件
@@ -1062,6 +1350,32 @@
   });
 
   $('btnRaw').onclick = requestRaw;
+
+  // 歌单 / 我喜欢的
+  document.querySelectorAll('.tabs .tab').forEach((tab) => {
+    tab.onclick = () => {
+      document.querySelectorAll('.tabs .tab').forEach((t) => t.classList.toggle('active', t === tab));
+      const liked = tab.dataset.tab === 'liked';
+      $('likedPane').classList.toggle('hidden', !liked);
+      $('plSearchPane').classList.toggle('hidden', liked);
+      $('plDetailPane').classList.add('hidden');
+    };
+  });
+  $('btnPlSearch').onclick = searchPlaylists;
+  $('plQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchPlaylists(); });
+  $('btnPlBack').onclick = () => {
+    $('plDetailPane').classList.add('hidden');
+    $('plSearchPane').classList.remove('hidden');
+  };
+  $('btnLiked').onclick = loadLiked;
+
+  // 事件类型筛选
+  document.querySelectorAll('#eventChips .chip').forEach((chip) => {
+    chip.onclick = () => {
+      chip.classList.toggle('active');
+      refreshEvents(true);
+    };
+  });
 
   $('btnSend').onclick = sendMessage;
   $('msgText').addEventListener('input', (e) => {

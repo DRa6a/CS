@@ -146,7 +146,10 @@ git clone https://github.com/DRa6a/CS.git
   "avatarUrl": "https://littleskin.cn/avatar/player/{name}?size=96",
   "neteaseLogin": true,
   "corsOrigins": ["*"],
-  "tokenAuth": true
+  "tokenAuth": true,
+  "eventsEnabled": true,
+  "eventTypes": ["chat", "web", "join", "quit", "death", "command"],
+  "eventHistorySize": 400
 }
 ```
 
@@ -160,6 +163,9 @@ git clone https://github.com/DRa6a/CS.git
 - `neteaseLogin`：是否允许玩家在网页绑定自己的网易云账号（绑定后能播 VIP 歌）
 - `corsOrigins`：允许哪些外部网页调用接口。`["*"]` 放行任意站点（默认，方便自己写页面）；留空只允许同源；也可以写死具体来源 `["https://me.github.io"]`。本地双击打开的 html 来源是字符串 `null`，需要时把它写进列表
 - `tokenAuth`：允许 `Authorization: Bearer <token>` 鉴权。跨站页面带不上 HttpOnly Cookie，外部接入靠这个；关掉等于禁止外部网页接入
+- `eventsEnabled`：事件流总开关，关掉后 `/api/events` 恒为空
+- `eventTypes`：记录哪些事件，可选 `chat`（游戏聊天）、`web`（网页消息）、`join`（进服）、`quit`（离服）、`death`（死亡）、`command`（执行命令）。不想暴露玩家执行的命令，把 `command` 删掉就行
+- `eventHistorySize`：事件环形缓冲保留多少条（50~5000，默认 400），只在内存里，重启清空
 - `fallbackEnabled` / `fallbackUrlTemplate` / `fallbackJsonField`：备用音源，见下
 
 ### 备用音源（可选）
@@ -298,12 +304,52 @@ Pages 开法：仓库 Settings → Pages → Source 选 `Deploy from a branch`�
 | POST | `/api/netease/logout` | 解除绑定 |
 | GET | `/api/players` | 在线玩家（含是否装了 Cu） |
 | GET | `/api/search?q=` | 搜索网易云 |
+| GET | `/api/playlists?q=&limit=` | 搜歌单（`limit` 1~50，默认 20） |
+| GET | `/api/playlist?id=&limit=` | 歌单详情，含前 `limit` 首（1~500，默认 100） |
+| GET | `/api/liked?limit=&offset=` | 我喜欢的音乐，**需要先绑定网易云**（`limit` 1~200，默认 100） |
 | POST | `/api/request` | `{id, name, artist, url, target}`，`target` 为玩家名或 `__all__` |
 | GET | `/api/entries` | 最近点歌与状态 |
 | POST | `/api/message` | `{target, text}` 发消息给玩家或全服，进游戏聊天栏 |
 | GET | `/api/chat` | 游戏内对话（玩家发言 + 网页消息），带来源标记 |
+| GET | `/api/events?since=&limit=&types=` | 事件流：聊天/进服/离服/死亡/命令，每条带时间戳 |
 
 `target` 的取值：玩家名 / `__all__`（全服，需 `allowBroadcast`）/ `self` 或留空（自己）。
+
+### 事件流
+
+`/api/events` 把「聊天之外还发生了什么」也吐出来，一条一个事件：
+
+```json
+{
+  "ok": true,
+  "latest": 128,
+  "enabled": true,
+  "recorded": ["chat", "web", "join", "quit", "death", "command"],
+  "events": [
+    { "id": 128, "at": 1763175123000, "time": "11:12:03", "type": "quit",  "player": "Steve", "text": "离开了服务器" },
+    { "id": 127, "at": 1763175099000, "time": "11:10:59", "type": "web",   "player": "DRa6a", "text": "这是网页发来的测试消息" },
+    { "id": 126, "at": 1763174885000, "time": "11:08:45", "type": "death", "player": "Alex",  "text": "被 僵尸 击杀", "detail": "mob" },
+    { "id": 125, "at": 1763174790000, "time": "11:06:30", "type": "command","player": "DRa6a","text": "/gamemode creative", "detail": "player" },
+    { "id": 124, "at": 1763174642000, "time": "11:04:02", "type": "chat",  "player": "Alex",  "text": "有人来挖矿吗" }
+  ]
+}
+```
+
+- `at` 是毫秒时间戳，`time` 是服务端时区的 `HH:mm:ss`，前端想自己格式化就用 `at`
+- `since` 只回 `id` 更大的事件，把响应里的 `latest` 存下来当下次的 `since`，轮询就只传增量
+- `types` 用逗号分隔筛选，如 `?types=chat,death`；不传就是全部
+- `detail`：命令的来源（`player` / `server`）、死亡的伤害类型 id（`mob` / `player` …），不一定有
+- 哪些类型会被记录由 `si.json` 的 `eventTypes` 决定，关掉的类型不会出现，`recorded` 里能看到实际开启的
+
+内置网页的「游戏内对话」还是只看聊天；事件流目前只走接口，想显示在页面上自己加一段就行。
+
+### 歌单与我喜欢的
+
+- `GET /api/playlists?q=周杰伦` → `{playlists:[{id,name,cover,trackCount,creator,playCount,description}]}`
+- `GET /api/playlist?id=3778678` → `{playlist:{…}, songs:[…]}`，`songs` 的字段和 `/api/search` 完全一致（含 `state` 可播状态和 `url`），拿到就能直接 `POST /api/request`
+- `GET /api/liked?limit=100&offset=0` → `{songs:[…], offset, limit}`，只对**已绑定网易云**的账号有效，没绑定返回 `400` 和中文提示
+
+两个接口都有 5 分钟缓存（我喜欢的 1 分钟），刚点赞的歌曲稍等一下就能看到。
 
 ### 错误格式
 
