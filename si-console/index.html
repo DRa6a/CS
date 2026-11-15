@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBEFF5">
+<title>点歌 · 点歌台</title>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="request">
+<header class="app-header" id="appHeader"></header>
+
+<main class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">Request a song</div>
+    <h1>点歌</h1>
+    <p>搜一首、从收藏里挑一首，或者打开一个歌单 —— 选好点一下就行。正在听和播放列表在右边的小箭头里。</p>
+  </div>
+
+  <!-- 搜索 -->
+  <section class="card solid">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <input class="input" id="searchInput" placeholder="搜歌名、歌手，或者直接粘歌曲号" autocomplete="off">
+      <button class="btn btn-primary" id="btnSearch">搜索</button>
+    </div>
+      <div class="row wrap" style="margin-top:14px;gap:14px">
+        <div class="grow" style="min-width:180px">
+          <label for="requestTarget" class="small muted" style="display:block;margin-bottom:6px;font-weight:700">放给谁听</label>
+          <select class="select" id="requestTarget"><option value="self">只放给我自己听</option></select>
+        </div>
+        <div class="grow" style="min-width:180px">
+          <label for="requestSource" class="small muted" style="display:block;margin-bottom:6px;font-weight:700">音源</label>
+          <select class="select" id="requestSource">
+            <option value="server">跟随服务器</option>
+            <option value="netease">网易云</option>
+            <option value="external">适配服务</option>
+            <option value="auto">自动（优先适配）</option>
+          </select>
+        </div>
+        <div class="small dim" id="searchMeta" style="padding-top:22px">输入关键词开始找歌</div>
+      </div>
+  </section>
+
+  <a class="msg info hidden" id="neteaseTip" href="settings.html" style="display:block;margin-top:16px;text-decoration:none">还没绑定网易云 · 会员歌曲播不了，点这里绑定 →</a>
+
+  <section class="section">
+    <div class="section-head"><h2>搜索结果</h2><span class="hint" id="resultHint"></span>
+      <span class="spacer"></span><button class="btn btn-sm btn-ghost" id="clearSearch">清空</button></div>
+    <div class="card solid" id="searchResults">
+      <div class="empty"><span class="big">♫</span>还没有搜索<p>试试「周杰伦」「晴天」或者「C418」</p></div>
+    </div>
+  </section>
+
+  <!-- 直链点歌：原版网页的自定音频地址能力 -->
+  <section class="section">
+    <details class="accordion">
+      <summary>用直链点歌 <span class="sub">· 自定义音频地址，不走网易云搜索</span></summary>
+      <div class="accordion-body">
+        <div class="row wrap" style="gap:10px;margin-top:16px">
+          <input class="input mono" id="rawUrl" placeholder="https://…/song.mp3 音频直链" style="flex:2;min-width:220px" autocomplete="off">
+          <input class="input" id="rawName" placeholder="歌曲名（可选）" style="flex:1;min-width:140px" autocomplete="off">
+          <button class="btn btn-primary" id="btnRaw">点这首</button>
+        </div>
+        <p class="card-sub" style="margin-top:10px;line-height:1.7">直接把音频地址发给目标客户端；目标不在服里时同样会在这台设备上播放。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- 我喜欢的音乐 -->
+  <section class="section">
+    <div class="section-head">
+      <h2>我喜欢的音乐</h2>
+      <span class="hint">读网易云收藏，需要先绑定账号</span>
+      <span class="spacer"></span>
+      <button class="btn btn-sm btn-primary" id="btnLiked">打开我的收藏</button>
+    </div>
+    <div class="card solid" id="likedResults">
+      <div class="empty"><span class="big">♥</span>还没打开<p>绑定网易云账号后就能读到你的收藏</p></div>
+    </div>
+    <div class="small dim" id="likedMeta" style="margin-top:10px"></div>
+  </section>
+
+  <!-- 打开歌单 -->
+  <section class="section">
+    <div class="section-head">
+      <h2>打开歌单</h2>
+      <span class="hint">粘贴链接或歌单号直接打开，也能点下面的卡片</span>
+    </div>
+    <div class="row wrap" style="gap:10px;margin-bottom:16px">
+      <input class="input" id="playlistId" placeholder="粘贴歌单链接或歌单号，比如 3778678" style="flex:1;min-width:220px" autocomplete="off">
+      <button class="btn btn-primary" id="btnOpenPlaylist">打开歌单</button>
+      <input class="input" id="playlistSearch" placeholder="搜歌单" style="width:170px" autocomplete="off">
+    </div>
+    <div class="grid g4" id="playlistGrid"></div>
+  </section>
+
+  <!-- 推荐 -->
+  <section class="section">
+    <div class="section-head"><h2>大家都在点</h2><span class="hint">点一下就能放进队列</span></div>
+    <div class="grid g4" id="recommendGrid"></div>
+  </section>
+</main>
+
+<nav class="bottom-nav" id="bottomNav"></nav>
+<div id="sideRoot"></div>
+<div id="toast-host"></div>
+<div id="modalHost"></div>
+
+<script src="assets/js/core.js"></script>
+<script src="assets/js/mock.js"></script>
+<script src="assets/js/player.js"></script>
+<script src="assets/js/shell.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

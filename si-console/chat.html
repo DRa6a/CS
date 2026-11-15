@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBEFF5">
+<title>聊天 · 点歌台</title>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="chat">
+<header class="app-header" id="appHeader"></header>
+
+<main class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">Chat & activity</div>
+    <h1>聊天</h1>
+    <p>喊话和服务器里的动静都在这一页，切一下就能看。</p>
+  </div>
+
+  <div class="section-head" style="margin-bottom:20px">
+    <span class="spacer"></span>
+    <div class="view-tabs" id="viewTabs">
+      <button class="active" data-view="chat">喊话</button>
+      <button data-view="events">服务器动态</button>
+    </div>
+  </div>
+
+  <!-- 喊话 -->
+  <div id="chatView" class="grid hero-layout">
+    <section class="card solid">
+      <div class="section-head" style="margin-bottom:10px">
+        <h2>服务器聊天</h2>
+        <span class="hint" id="chatHint">最新的在最下面</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="btnRefreshChat">刷新</button>
+      </div>
+      <div class="chat-scroll" id="chatList"></div>
+      <div class="divider"></div>
+      <div class="row wrap" style="gap:8px;margin-bottom:12px" id="quickLines"></div>
+      <div class="row" style="margin-bottom:8px"><span class="spacer"></span><span class="small dim" id="msgCount">0 / 120</span></div>
+      <div class="chat-compose">
+        <input class="input" id="chatInput" placeholder="说点什么…（最多 120 字）" maxlength="120" autocomplete="off">
+        <button class="btn btn-primary" id="btnSend">发送</button>
+      </div>
+    </section>
+
+    <section class="stack">
+      <div class="card solid">
+        <h3 class="card-title">发给谁</h3>
+        <p class="card-sub">默认全服都能看见</p>
+        <select class="select" id="chatTarget" style="margin-top:14px">
+          <option value="__all__">全服都能看见</option>
+          <option value="self">只发给我自己</option>
+        </select>
+        <div class="divider"></div>
+        <div class="row"><span class="grow small muted">现在在线</span><b id="onlineHint">—</b></div>
+        <div class="row" style="margin-top:8px"><span class="grow small muted">刷新方式</span><span class="small dim">自动</span></div>
+      </div>
+      <div class="card tight">
+        <div class="card-title">小提示</div>
+        <p class="card-sub" style="margin-top:6px;line-height:1.7">发得太快会被拦一下，等几秒再发就好。说的话会同时留在「服务器动态」里。</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- 服务器动态 -->
+  <div id="eventsView" class="grid hero-layout hidden">
+    <section class="card solid">
+      <div class="section-head">
+        <h2>服务器动态</h2><span class="hint" id="eventCount">—</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="btnRefreshEvents">刷新</button>
+        <button class="btn btn-sm btn-ghost" id="btnExportEvents">导出</button>
+      </div>
+      <div class="chips" id="eventTypes" style="margin-bottom:14px">
+        <button class="chip active" data-value="all">全部</button>
+        <button class="chip" data-value="chat">聊天</button>
+        <button class="chip" data-value="web">网页喊话</button>
+        <button class="chip" data-value="join">进服</button>
+        <button class="chip" data-value="quit">离服</button>
+        <button class="chip" data-value="death">死亡</button>
+        <button class="chip" data-value="command">命令</button>
+      </div>
+      <div class="timeline" id="eventList"></div>
+    </section>
+
+    <section class="stack">
+      <div class="card solid">
+        <h3 class="card-title">自动更新</h3>
+        <p class="card-sub" style="margin-bottom:14px">只拉新发生的，不重复刷屏</p>
+        <label class="toggle"><input type="checkbox" id="eventAuto" checked><span class="track"></span><span>每 6 秒看一次</span></label>
+        <div class="divider"></div>
+        <div class="row"><span class="grow small muted">已记录类型</span></div>
+        <div class="small dim" style="margin-top:6px" id="recordedTypes">—</div>
+      </div>
+      <div class="card tight">
+        <div class="card-title">小提示</div>
+        <p class="card-sub" style="margin-top:6px;line-height:1.7">这里能看到谁进服、谁说了话、谁点了歌。平时用「喊话」就够了。</p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<nav class="bottom-nav" id="bottomNav"></nav>
+<div id="sideRoot"></div>
+<div id="toast-host"></div>
+<div id="modalHost"></div>
+
+<script src="assets/js/core.js"></script>
+<script src="assets/js/mock.js"></script>
+<script src="assets/js/player.js"></script>
+<script src="assets/js/shell.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

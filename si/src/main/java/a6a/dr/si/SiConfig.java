@@ -61,6 +61,41 @@ public final class SiConfig {
 	public String fallbackUrlTemplate = "";
 	/** 备用接口若返回 JSON，填装着音频地址的字段（如 url 或 data.url）；留空表示接口直接返回音频 */
 	public String fallbackJsonField = "";
+
+	// ---------------------------------------------------------- 适配服务（方案文档：解析服务 + 可选代理转发层）
+	/**
+	 * 是否启用「适配服务」作为 id → 直链的解析源。
+	 *
+	 * <p>这套服务独立、无鉴权，不依赖网易云账号（cookie 不参与）。
+	 * 默认关闭；开启后由 {@code musicSource} 决定它是否真正参与点歌取地址。</p>
+	 */
+	public boolean externalMusicEnabled = false;
+	/** 解析服务基址，支持 {id} {br} 占位，例如 https://host/api/url?id={id}&br={br} 或 https://host/song/ */
+	public String externalParseBase = "";
+	/** 代理转发层基址（跨域 / 防盗链兜底），可空 */
+	public String externalProxyBase = "";
+	/** 解析返回形态：302 / text / json，默认 302 */
+	public String externalParseMode = "302";
+	/** mode=json 时取音频地址的字段，支持 a.b.c 嵌套，如 data.url */
+	public String externalParseJsonField = "url";
+	/** 音质参数，如 320 */
+	public int externalBitrate = 320;
+	/** 是否强制所有解析结果都走代理转发层 */
+	public boolean externalForceProxy = false;
+	/** 解析超时（秒） */
+	public int externalTimeoutSeconds = 10;
+	/**
+	 * 音源选择器：决定 /api/request 点歌默认用哪套解析源。
+	 *
+	 * <ul>
+	 *   <li>{@code netease}（默认）：只用网易云；</li>
+	 *   <li>{@code external}：只用适配服务（取不到就报错，不回退）；</li>
+	 *   <li>{@code auto}：适配服务优先，拿不到再回退网易云。</li>
+	 * </ul>
+	 * 前端点歌请求体里的 {@code source} 字段可临时覆盖这里的默认值。
+	 */
+	public String musicSource = "netease";
+
 	/**
 	 * 允许哪些外部网页调用 /api/*（CORS 白名单）。
 	 *
@@ -133,6 +168,19 @@ public final class SiConfig {
 		if (avatarUrl == null) avatarUrl = "";
 		if (fallbackUrlTemplate == null) fallbackUrlTemplate = "";
 		if (fallbackJsonField == null) fallbackJsonField = "";
+		if (externalParseBase == null) externalParseBase = "";
+		if (externalProxyBase == null) externalProxyBase = "";
+		if (externalParseMode == null
+				|| (!"302".equals(externalParseMode) && !"text".equals(externalParseMode) && !"json".equals(externalParseMode))) {
+			externalParseMode = "302";
+		}
+		if (externalParseJsonField == null) externalParseJsonField = "";
+		if (externalBitrate < 0) externalBitrate = 320;
+		if (externalTimeoutSeconds < 3) externalTimeoutSeconds = 10;
+		if (musicSource == null
+				|| (!"netease".equals(musicSource) && !"external".equals(musicSource) && !"auto".equals(musicSource))) {
+			musicSource = "netease";
+		}
 		if (corsOrigins == null) corsOrigins = new ArrayList<>();
 		// 去掉空白项和结尾的斜杠，写 https://a.com/ 和 https://a.com 等价
 		List<String> cleaned = new ArrayList<>();

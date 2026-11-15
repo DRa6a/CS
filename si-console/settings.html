@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBEFF5">
+<title>设置 · 点歌台</title>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="settings">
+<header class="app-header" id="appHeader"></header>
+
+<main class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">Settings</div>
+    <h1>设置</h1>
+    <p>平时不用管这里。想连真实服务器、听会员歌，或者改点外观，再来就好。</p>
+  </div>
+
+  <div class="grid hero-layout">
+    <div class="stack">
+
+      <!-- 连接状态 -->
+      <section class="card solid">
+        <div class="section-head" style="margin-bottom:12px"><h2>当前连接</h2><span class="spacer"></span><span id="connState" class="badge">检查中</span></div>
+        <div class="row" style="gap:14px">
+          <span class="avatar lg" id="myAvatar"></span>
+          <div class="grow"><div style="font-weight:700" id="myName">玩家</div><div class="small dim" id="myServer">—</div></div>
+          <div style="text-align:right"><div style="font-weight:800;font-size:22px" id="onlineCount">—</div><div class="small dim">人在服务器</div></div>
+        </div>
+        <div class="divider"></div>
+        <p class="card-sub" style="line-height:1.7" id="connExplain">正在读取连接状态…</p>
+        <button class="btn btn-sm btn-ghost" id="btnLogout" style="margin-top:12px">退出登录</button>
+      </section>
+
+      <!-- 接入真实服务器 -->
+      <details class="accordion" id="connectAccordion">
+        <summary>接入真实服务器 <span class="sub">· 服主给了链接就不用填</span></summary>
+        <div class="accordion-body">
+          <div class="field" style="margin-top:16px">
+            <label for="apiUrl">服务器地址</label>
+            <input class="input" id="apiUrl" placeholder="http://127.0.0.1:8765">
+          </div>
+          <div class="field">
+            <label for="loginName">游戏里的名字</label>
+            <input class="input" id="loginName" placeholder="比如 DRa6a" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="loginPwd">网页密码</label>
+            <input class="input" id="loginPwd" type="password" placeholder="在游戏聊天栏里设置的那个">
+          </div>
+          <div class="row" style="margin-top:18px;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="btnConnect">连接并登录</button>
+            <button class="btn btn-ghost" id="btnBackDemo">回到试听模式</button>
+          </div>
+          <div id="connectResult"></div>
+          <p class="small dim" style="margin-top:14px;line-height:1.7">小提示：如果点歌台是 https 打开的，浏览器会拦住内网 http 地址，需要用同网 http 打开或做一层反代。</p>
+        </div>
+      </details>
+
+      <!-- 网易云账号 -->
+      <details class="accordion">
+        <summary>网易云账号 <span class="sub">· 听会员歌 / 读我的收藏</span></summary>
+        <div class="accordion-body">
+          <p class="card-sub" style="margin:16px 0 12px">当前：<b id="neteaseState">检查中…</b></p>
+          <div class="chips" style="margin-bottom:14px">
+            <button class="chip active" data-netease="qr">扫码登录</button>
+            <button class="chip" data-netease="phone">手机号</button>
+            <button class="chip" data-netease="cookie">Cookie</button>
+          </div>
+
+          <div id="pane-qr">
+            <button class="btn" id="btnQr">生成二维码</button>
+            <div id="qrBox" class="hidden" style="margin-top:14px;text-align:center">
+              <img id="qrImg" alt="登录二维码" style="width:200px;height:200px;margin:0 auto;border-radius:14px;background:#fff;padding:8px">
+              <div class="small muted" id="qrStatus" style="margin-top:10px">等待扫码…</div>
+            </div>
+          </div>
+
+          <div id="pane-phone" class="hidden">
+            <div class="field"><label for="phoneNum">手机号</label><input class="input" id="phoneNum" placeholder="13800000000"></div>
+            <div class="field"><label for="phonePwd">密码</label><input class="input" id="phonePwd" type="password"></div>
+            <button class="btn btn-primary" id="btnPhone" style="margin-top:16px">绑定</button>
+          </div>
+
+          <div id="pane-cookie" class="hidden">
+            <div class="field"><label for="musicU">MUSIC_U</label><input class="input" id="musicU" placeholder="从浏览器 Cookie 里复制"></div>
+            <button class="btn btn-primary" id="btnCookie" style="margin-top:16px">绑定</button>
+          </div>
+
+          <div id="neteaseResult"></div>
+          <button class="btn btn-ghost btn-sm" id="btnUnbind" style="margin-top:16px">解除绑定</button>
+        </div>
+      </details>
+
+      <!-- 改密码 -->
+      <details class="accordion">
+        <summary>修改网页密码</summary>
+        <div class="accordion-body">
+          <div class="field" style="margin-top:16px"><label for="oldPwd">现在的密码</label><input class="input" id="oldPwd" type="password"></div>
+          <div class="field"><label for="newPwd">新密码（至少 6 位）</label><input class="input" id="newPwd" type="password"></div>
+          <button class="btn btn-primary" id="btnPassword" style="margin-top:16px">保存</button>
+          <div id="passwordResult"></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="stack">
+      <!-- 外观与习惯 -->
+      <section class="card solid">
+        <h3 class="card-title">外观</h3>
+        <p class="card-sub" style="margin-bottom:14px">樱花日是浅粉玻璃，樱花夜是深梅紫，随手切换</p>
+        <label class="toggle"><input type="checkbox" id="themeToggle"><span class="track"></span><span>樱花日（浅色）</span></label>
+        <div class="divider"></div>
+        <label for="defaultTarget" class="small muted" style="display:block;margin-bottom:8px;font-weight:700">默认放给谁听</label>
+        <select class="select" id="defaultTarget"><option value="self">只放给我自己听</option></select>
+      </section>
+
+      <!-- 高级 -->
+      <section class="card solid">
+        <h3 class="card-title">给服主 / 开发者</h3>
+        <p class="card-sub" style="margin-bottom:14px">平时用不到，排查问题时可以打开</p>
+        <a class="btn btn-block" href="chat.html" style="margin-bottom:8px">服务器动态（聊天页）</a>
+        <a class="btn btn-block" href="api.html">接口调试台</a>
+        <div class="divider"></div>
+        <div class="field">
+          <label for="tokenInput">接入口令（Token）</label>
+          <input class="input" id="tokenInput" placeholder="留空表示由登录自动获取" autocomplete="off">
+        </div>
+        <button class="btn btn-sm" id="btnToken" style="margin-top:12px">保存口令</button>
+        <div id="tokenResult"></div>
+        <div class="divider"></div>
+        <label class="toggle"><input type="checkbox" id="simulateOffline"><span class="track"></span><span>演示：让点歌目标不在线</span></label>
+        <p class="card-sub" style="margin-top:8px;line-height:1.6">打开后点歌会走「目标不在线」分支，自动在这台设备上播放，用来体验网页播放。</p>
+        <div class="divider"></div>
+        <div class="field">
+          <label for="musicSource">点歌音源（覆盖服务器默认）</label>
+          <select class="select" id="musicSource">
+            <option value="server">跟随服务器</option>
+            <option value="netease">网易云</option>
+            <option value="external">适配服务</option>
+            <option value="auto">自动（适配服务优先）</option>
+          </select>
+        </div>
+        <p class="small dim" style="margin-top:8px;line-height:1.6">服务器默认音源在 si.json 的 <code>musicSource</code> 里设置（netease / external / auto）。这里可以临时覆盖；选「跟随服务器」就用服务器的设置。</p>
+        <div class="divider"></div>
+        <button class="btn btn-sm btn-ghost" id="btnReseed">重置试听数据</button>
+      </section>
+
+      <section class="card tight">
+        <div class="row"><span class="grow small muted">点歌台版本</span><span class="small mono dim" id="versionText">—</span></div>
+        <div class="row" style="margin-top:8px"><span class="grow small muted">数据来源</span><span class="small dim" id="sourceText">—</span></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<nav class="bottom-nav" id="bottomNav"></nav>
+<div id="sideRoot"></div>
+<div id="toast-host"></div>
+<div id="modalHost"></div>
+
+<script src="assets/js/core.js"></script>
+<script src="assets/js/mock.js"></script>
+<script src="assets/js/player.js"></script>
+<script src="assets/js/shell.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

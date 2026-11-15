@@ -6,6 +6,7 @@ import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.message.ChatService;
 import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
+import a6a.dr.si.music.ExternalSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
 import a6a.dr.si.music.RequestLog;
@@ -31,6 +32,7 @@ public final class SiCore {
 	private static RequestLog requests;
 	private static NeteaseStore netease;
 	private static FallbackSource fallback;
+	private static ExternalSource external;
 	private static ChatService chat;
 	private static EventLog events;
 
@@ -48,7 +50,7 @@ public final class SiCore {
 
 	public static void init(SiConfig cfg, AccountStore acc, SessionStore sess, MusicService mus,
 							RequestLog req, NeteaseStore neteaseStore, FallbackSource fallbackSource,
-							ChatService chatService, EventLog eventLog) {
+							ExternalSource externalSource, ChatService chatService, EventLog eventLog) {
 		config = cfg;
 		accounts = acc;
 		sessions = sess;
@@ -56,6 +58,7 @@ public final class SiCore {
 		requests = req;
 		netease = neteaseStore;
 		fallback = fallbackSource;
+		external = externalSource;
 		chat = chatService;
 		events = eventLog;
 	}
@@ -74,6 +77,10 @@ public final class SiCore {
 
 	public static FallbackSource fallback() {
 		return fallback;
+	}
+
+	public static ExternalSource external() {
+		return external;
 	}
 
 	public static SiConfig config() {

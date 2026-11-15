@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBEFF5">
+<title>接口调试台 · 点歌台</title>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="api">
+<header class="app-header" id="appHeader"></header>
+
+<main class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">Advanced · Console</div>
+    <h1>接口调试台</h1>
+    <p>把点歌台的每个请求都摆出来，方便核对和排查。<a href="settings.html" class="muted" style="text-decoration:underline">← 回设置</a></p>
+  </div>
+
+  <div class="grid" style="grid-template-columns:280px minmax(0,1fr)">
+    <section class="card solid" style="padding:14px">
+      <div class="card-title" style="padding:0 8px 10px">接口清单 <span class="dim small" id="epCount"></span></div>
+      <div class="ep-list" id="epList"></div>
+    </section>
+
+    <div class="stack">
+      <section class="card solid">
+        <div class="section-head" style="margin-bottom:6px">
+          <h2 id="epTitle">选一个接口</h2><span class="spacer"></span><span class="badge" id="epMethod">—</span>
+        </div>
+        <p class="card-sub" id="epDesc">从左边挑一个，改好参数就能试。</p>
+        <div class="divider"></div>
+        <div id="epParams"></div>
+        <div class="field" style="margin-top:14px">
+          <label for="epBody">请求内容（JSON）</label>
+          <textarea class="textarea mono" id="epBody" spellcheck="false"></textarea>
+        </div>
+        <div class="row wrap" style="margin-top:16px;gap:8px">
+          <button class="btn btn-primary" id="btnSendApi">发请求</button>
+          <button class="btn btn-ghost" id="btnCurl">复制为 curl</button>
+          <button class="btn btn-ghost" id="btnCopyResp">复制响应</button>
+        </div>
+        <div class="small dim" style="margin-top:12px" id="apiMeta">—</div>
+        <pre class="code" id="apiResult" style="margin-top:10px">等待请求…</pre>
+      </section>
+
+      <section class="card solid">
+        <div class="section-head" style="margin-bottom:10px"><h2>最近的请求</h2><span class="spacer"></span><button class="btn btn-sm btn-ghost" id="btnClearLog">清空</button></div>
+        <div id="logList"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<nav class="bottom-nav" id="bottomNav"></nav>
+<div id="sideRoot"></div>
+<div id="toast-host"></div>
+<div id="modalHost"></div>
+
+<script src="assets/js/core.js"></script>
+<script src="assets/js/mock.js"></script>
+<script src="assets/js/player.js"></script>
+<script src="assets/js/shell.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

@@ -9,6 +9,7 @@ import a6a.dr.si.command.SiCommand;
 import a6a.dr.si.message.ChatService;
 import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
+import a6a.dr.si.music.ExternalSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
 import a6a.dr.si.music.RequestLog;
@@ -56,6 +57,10 @@ public class Si implements ModInitializer {
 				new NeteaseStore(dir.resolve("netease.json")),
 				new FallbackSource(config.fallbackEnabled, config.fallbackUrlTemplate,
 						config.fallbackJsonField, config.searchTimeoutSeconds),
+				new ExternalSource(config.externalMusicEnabled, config.externalParseBase,
+						config.externalProxyBase, config.externalParseMode,
+						config.externalParseJsonField, config.externalBitrate,
+						config.externalForceProxy, config.externalTimeoutSeconds),
 				new ChatService(200),
 				new EventLog(config.eventHistorySize, config.eventsEnabled ? config.eventTypes : List.of())
 		);

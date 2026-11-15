@@ -8,6 +8,7 @@ import a6a.dr.si.auth.SessionStore;
 import a6a.dr.si.message.ChatService;
 import a6a.dr.si.message.EventLog;
 import a6a.dr.si.music.FallbackSource;
+import a6a.dr.si.music.ExternalSource;
 import a6a.dr.si.music.MusicService;
 import a6a.dr.si.music.NeteaseStore;
 import a6a.dr.si.music.QrCodes;
@@ -344,6 +345,8 @@ public final class WebServer {
 		body.addProperty("online", OnlineRegistry.size());
 		body.addProperty("tokenAuth", config.tokenAuth);
 		body.addProperty("allowBroadcast", config.allowBroadcast);
+		body.addProperty("musicSource", config.musicSource);
+		body.addProperty("externalMusicEnabled", SiCore.external() != null && SiCore.external().enabled());
 		JsonArray auth = new JsonArray();
 		auth.add("cookie");
 		if (config.tokenAuth) auth.add("bearer");
@@ -874,17 +877,41 @@ public final class WebServer {
 		if (title.isBlank()) title = "未知歌曲";
 		if (artist.isBlank()) artist = "未知歌手";
 
+		// 音源选择：请求体里的 source 字段可临时覆盖配置默认（netease / external / auto）
+		String want = str(body, "source").trim().toLowerCase(Locale.ROOT);
+		if (!"netease".equals(want) && !"external".equals(want) && !"auto".equals(want)) {
+			want = config.musicSource == null ? "netease" : config.musicSource;
+		}
+
 		String url = null;
 		String source = "netease";
 		if (songId > 0) {
-			// 按 id 点歌时总是重新解析，拿到最新的（带签名的）地址
-			url = SiCore.music().resolveUrl(songId, cookie);
+			// 适配服务（无 cookie、独立解析）：external / auto 时优先尝试
+			if ("external".equals(want) || "auto".equals(want)) {
+				ExternalSource ext = SiCore.external();
+				if (ext != null && ext.enabled()) {
+					String extUrl = ext.resolve(songId);
+					if (extUrl != null && !extUrl.isBlank()) {
+						url = extUrl;
+						source = "external";
+					}
+				}
+			}
+			// 网易云解析：netease 默认 / auto 回退 / external 未选中时
+			if (url == null && !"external".equals(want)) {
+				String netUrl = SiCore.music().resolveUrl(songId, cookie);
+				if (netUrl != null && !netUrl.isBlank()) {
+					url = netUrl;
+					source = "netease";
+				}
+			}
 		}
 		if (url == null && !rawUrl.isBlank()) {
 			url = rawUrl;
 		}
 		if (url == null && songId > 0) {
 			url = SiCore.music().outerUrl(songId);
+			source = "netease";
 		}
 		if (url == null || url.isBlank()) {
 			sendError(exchange, 400, "缺少歌曲地址");
