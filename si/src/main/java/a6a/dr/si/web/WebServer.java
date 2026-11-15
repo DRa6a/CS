@@ -184,6 +184,13 @@ public final class WebServer {
 	private void handle(HttpExchange exchange) {
 		String path = exchange.getRequestURI().getPath();
 		try {
+			// 跨域头要在写响应之前挂上，之后无论 200 / 304 / 4xx 都会带上
+			applyCors(exchange);
+			if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+				// 预检：外部页面带 Authorization 或 application/json 时浏览器先问一遍
+				exchange.sendResponseHeaders(204, -1);
+				return;
+			}
 			if (path.startsWith("/api/")) {
 				handleApi(exchange, path);
 			} else {
@@ -201,6 +208,49 @@ public final class WebServer {
 		} finally {
 			exchange.close();
 		}
+	}
+
+	/**
+	 * 给响应挂 CORS 头，让外部网页（不同源、甚至本地双击打开的 html）能读到接口返回。
+	 *
+	 * <p>白名单在 {@code si.json} 的 {@code corsOrigins} 里，{@code "*"} 表示放行任意来源。
+	 * 这里**不**开 {@code Access-Control-Allow-Credentials}：外部页面带不上 HttpOnly 的
+	 * 会话 Cookie，鉴权统一走 {@code Authorization: Bearer}，也就不需要放开凭据。</p>
+	 */
+	private void applyCors(HttpExchange exchange) {
+		String origin = exchange.getRequestHeaders().getFirst("Origin");
+		if (origin == null || origin.isBlank()) return;
+		String allowed = allowedOrigin(origin);
+		if (allowed == null) return;
+		exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowed);
+		if (!"*".equals(allowed)) {
+			// 回显具体来源时必须声明 Vary，否则中间缓存会把 A 站的响应喂给 B 站
+			exchange.getResponseHeaders().add("Vary", "Origin");
+		}
+		exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+		exchange.getResponseHeaders().set("Access-Control-Allow-Headers",
+				"Authorization, Content-Type, If-None-Match");
+		exchange.getResponseHeaders().set("Access-Control-Expose-Headers", "ETag");
+		exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
+		// Chrome 的私有网络访问限制：公网页面调内网地址时要显式点头
+		if ("true".equalsIgnoreCase(exchange.getRequestHeaders()
+				.getFirst("Access-Control-Request-Private-Network"))) {
+			exchange.getResponseHeaders().set("Access-Control-Allow-Private-Network", "true");
+		}
+	}
+
+	/** 命中白名单就返回要写进响应头的值（{@code *} 或原样回显来源），否则 null */
+	private String allowedOrigin(String origin) {
+		List<String> origins = config.corsOrigins;
+		if (origins == null || origins.isEmpty()) return null;
+		for (String entry : origins) {
+			if ("*".equals(entry)) return "*";
+		}
+		for (String entry : origins) {
+			// 本地文件（file://）的 Origin 是字符串 "null"，白名单里写 null 即可放行
+			if (entry.equalsIgnoreCase(origin)) return origin;
+		}
+		return null;
 	}
 
 	private void handleStatic(HttpExchange exchange, String path) throws IOException {
@@ -266,9 +316,25 @@ public final class WebServer {
 			case "/api/entries" -> apiEntries(exchange);
 			case "/api/message" -> apiMessage(exchange);
 			case "/api/chat" -> apiChat(exchange);
-			case "/api/health" -> sendJson(exchange, 200, ok());
+			case "/api/health" -> apiHealth(exchange);
 			default -> sendError(exchange, 404, "接口不存在");
 		}
+	}
+
+	/** 连通性探测：不需要登录，外部页面用它确认地址和跨域是否通 */
+	private void apiHealth(HttpExchange exchange) throws IOException {
+		JsonObject body = ok();
+		body.addProperty("apiVersion", 1);
+		body.addProperty("name", config.serverName);
+		body.addProperty("url", SiCore.baseUrl());
+		body.addProperty("online", OnlineRegistry.size());
+		body.addProperty("tokenAuth", config.tokenAuth);
+		body.addProperty("allowBroadcast", config.allowBroadcast);
+		JsonArray auth = new JsonArray();
+		auth.add("cookie");
+		if (config.tokenAuth) auth.add("bearer");
+		body.add("auth", auth);
+		sendJson(exchange, 200, body);
 	}
 
 	// --------------------------------------------------------------- 账号
@@ -300,11 +366,19 @@ public final class WebServer {
 		}
 		String token = SiCore.sessions().create(username, SiCore.uuidByName(username), ip);
 		setCookie(exchange, token);
-		sendJson(exchange, 200, userPayload(username));
+		JsonObject payload = userPayload(username);
+		// 同一个 token 也放进响应体：外部页面拿不到 Cookie，靠它做 Bearer 鉴权
+		payload.addProperty("token", token);
+		payload.addProperty("tokenType", "Bearer");
+		payload.addProperty("expiresIn", Math.max(1, config.sessionHours) * 3600L);
+		sendJson(exchange, 200, payload);
 	}
 
 	private void apiLogout(HttpExchange exchange) throws IOException {
 		SiCore.sessions().remove(cookie(exchange, COOKIE));
+		if (config.tokenAuth) {
+			SiCore.sessions().remove(bearerToken(exchange));
+		}
 		exchange.getResponseHeaders().add("Set-Cookie", COOKIE + "=; Path=/; HttpOnly; Max-Age=0");
 		sendJson(exchange, 200, ok());
 	}
@@ -1081,8 +1155,31 @@ public final class WebServer {
 		return "";
 	}
 
+	/**
+	 * 取当前会话：Cookie 优先（内置网页），其次 {@code Authorization: Bearer}（外部页面），
+	 * 最后 {@code ?token=}（给没法加请求头的场景兜底，比如简单 <img>/<a> 调试）。
+	 */
 	private SessionStore.Session session(HttpExchange exchange) {
-		return SiCore.sessions().get(cookie(exchange, COOKIE));
+		SessionStore.Session session = SiCore.sessions().get(cookie(exchange, COOKIE));
+		if (session != null) return session;
+		if (!config.tokenAuth) return null;
+		return SiCore.sessions().get(bearerToken(exchange));
+	}
+
+	/** 从 Authorization 头或 ?token= 里取 token，没有就返回 null */
+	private static String bearerToken(HttpExchange exchange) {
+		String header = exchange.getRequestHeaders().getFirst("Authorization");
+		if (header != null && !header.isBlank()) {
+			String value = header.trim();
+			if (value.regionMatches(true, 0, "Bearer ", 0, 7)) {
+				value = value.substring(7).trim();
+			}
+			// 有的工具只填 token 不写 Bearer 前缀，也认
+			if (!value.isEmpty() && value.indexOf(' ') < 0) return value;
+			return null;
+		}
+		String token = queryParam(exchange, "token");
+		return token.isBlank() ? null : token;
 	}
 
 	private static String cookie(HttpExchange exchange, String name) {

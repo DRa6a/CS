@@ -61,6 +61,21 @@ public final class SiConfig {
 	public String fallbackUrlTemplate = "";
 	/** 备用接口若返回 JSON，填装着音频地址的字段（如 url 或 data.url）；留空表示接口直接返回音频 */
 	public String fallbackJsonField = "";
+	/**
+	 * 允许哪些外部网页调用 /api/*（CORS 白名单）。
+	 *
+	 * <p>填 {@code "*"} 表示任意站点都可以接入，适合个人定制页面；留空则只允许同源页面。
+	 * 也可以写具体来源，如 {@code "https://mc.example.com"}，本机双击打开的 html 文件
+	 * 来源是字符串 {@code "null"}，需要时把它也加进列表。</p>
+	 */
+	public List<String> corsOrigins = new ArrayList<>(List.of("*"));
+	/**
+	 * 允许用 {@code Authorization: Bearer <token>} 鉴权。
+	 *
+	 * <p>跨站页面带不上 HttpOnly 的会话 Cookie，外部接入靠这条走 token；
+	 * token 由 {@code POST /api/login} 返回。关掉后只认 Cookie（等于禁止外部接入）。</p>
+	 */
+	public boolean tokenAuth = true;
 
 	public static Path file() {
 		return FabricLoader.getInstance().getConfigDir().resolve("si.json");
@@ -108,6 +123,18 @@ public final class SiConfig {
 		if (avatarUrl == null) avatarUrl = "";
 		if (fallbackUrlTemplate == null) fallbackUrlTemplate = "";
 		if (fallbackJsonField == null) fallbackJsonField = "";
+		if (corsOrigins == null) corsOrigins = new ArrayList<>();
+		// 去掉空白项和结尾的斜杠，写 https://a.com/ 和 https://a.com 等价
+		List<String> cleaned = new ArrayList<>();
+		for (String origin : corsOrigins) {
+			if (origin == null || origin.isBlank()) continue;
+			String value = origin.trim();
+			if (!"*".equals(value)) {
+				while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+			}
+			cleaned.add(value);
+		}
+		corsOrigins = cleaned;
 	}
 
 	public void save() {

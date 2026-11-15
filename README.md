@@ -144,7 +144,9 @@ git clone https://github.com/DRa6a/CS.git
   "searchTimeoutSeconds": 10,
   "admins": ["DRa6a"],
   "avatarUrl": "https://littleskin.cn/avatar/player/{name}?size=96",
-  "neteaseLogin": true
+  "neteaseLogin": true,
+  "corsOrigins": ["*"],
+  "tokenAuth": true
 }
 ```
 
@@ -156,6 +158,8 @@ git clone https://github.com/DRa6a/CS.git
 
 - `avatarUrl`：玩家头像模板，支持 `{name}` `{uuid}`，默认取 **LittleSkin**（`littleskin.cn`）；留空则不显示头像，也可以换成 `https://mc-heads.net/avatar/{name}/96` 之类
 - `neteaseLogin`：是否允许玩家在网页绑定自己的网易云账号（绑定后能播 VIP 歌）
+- `corsOrigins`：允许哪些外部网页调用接口。`["*"]` 放行任意站点（默认，方便自己写页面）；留空只允许同源；也可以写死具体来源 `["https://me.github.io"]`。本地双击打开的 html 来源是字符串 `null`，需要时把它写进列表
+- `tokenAuth`：允许 `Authorization: Bearer <token>` 鉴权。跨站页面带不上 HttpOnly Cookie，外部接入靠这个；关掉等于禁止外部网页接入
 - `fallbackEnabled` / `fallbackUrlTemplate` / `fallbackJsonField`：备用音源，见下
 
 ### 备用音源（可选）
@@ -228,12 +232,62 @@ git clone https://github.com/DRa6a/CS.git
 
 ---
 
-## 六、网页接口
+## 六、网页接口（开放 API）
+
+内置网页和外部页面用的是**同一套 JSON 接口**，`/api/*` 全部对外开放，方便自己写前端。
+
+### 鉴权
+
+三种方式，任选其一：
+
+| 方式 | 适用场景 |
+| --- | --- |
+| Cookie `si_session` | 内置网页自己用（HttpOnly + SameSite=Lax，跨站带不出去） |
+| `Authorization: Bearer <token>` | **外部页面推荐**，token 来自登录响应 |
+| `?token=<token>` | 没法加请求头的场景（`<img>`、简单调试），会出现在日志里，别长期用 |
+
+登录拿 token：
+
+```bash
+curl -s http://127.0.0.1:8765/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"DRa6a","password":"你的网页密码"}'
+# → {"ok":true,"token":"…","tokenType":"Bearer","expiresIn":43200,"user":{…},"server":{…}}
+```
+
+之后每个请求带上 `Authorization: Bearer <token>` 即可。token 有效期跟 `sessionHours` 一致（默认 12 小时），服务端重启后全部失效。`POST /api/logout` 注销当前 token。
+
+### 跨域（CORS）
+
+外部页面和接口不同源时，浏览器会先发 `OPTIONS` 预检。服务端已经处理：
+
+- `OPTIONS /api/*` 回 `204`，带 `Access-Control-Allow-Methods` / `Allow-Headers`（`Authorization, Content-Type, If-None-Match`）/ `Max-Age`
+- 普通响应带 `Access-Control-Allow-Origin`，来源是否放行由 `si.json` 的 `corsOrigins` 决定
+- 回显具体来源时会带 `Vary: Origin`；`*` 时按规范不回显凭据（所以外部接入必须用 token，不能用 Cookie）
+- 公网页面访问内网地址时，Chrome 的私有网络限制也一并放行
+
+### 示例页
+
+仓库里的 [`docs/index.html`](docs/index.html) 是一个**零依赖单文件**示例：连接测试、登录取 token、在线玩家、搜歌点歌、直链点歌、记录轮询、发消息、游戏内对话、请求日志（含「复制为 curl」）。双击打开、丢到自己服务器、或部署到 GitHub Pages 都能用。
+
+- 地址栏支持预填：`index.html?api=http://mc.example.com:8765`
+- 服务地址、token、用户名都存在浏览器 `localStorage`，换页面不用重新登录
+- 想改成自己的样子，直接改 CSS/JS 就行——页面里每个请求都是独立的 `fetch`，没有框架依赖
+
+**部署到 GitHub Pages 要注意两点**（跟静态托管本身无关，是浏览器的规矩）：
+
+1. **混合内容**：Pages 是 HTTPS，如果点歌台还是 `http://`，浏览器会直接拦掉请求。要么给点歌台套一层 TLS（Nginx/Caddy 反代、Cloudflare Tunnel 都行），要么把页面放在 HTTP 环境里用。
+2. **私有网络**：HTTPS 的公网页面访问 `192.168.x.x` 这类内网地址会被 Chrome 的 Private Network Access 拦。要么走公网域名，要么本机/内网打开页面。
+
+Pages 开法：仓库 Settings → Pages → Source 选 `Deploy from a branch`，分支 `main`、目录 `/docs`，保存后访问 `https://<用户名>.github.io/CS/`。记得把该来源加进 `corsOrigins`（或保持 `"*"`）。
+
+### 接口表
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/login` | `{username, password}` |
-| POST | `/api/logout` | 退出 |
+| GET | `/api/health` | 连通性探测，**不需要登录**，返回服务器名/在线数/支持的鉴权方式 |
+| POST | `/api/login` | `{username, password}`，响应含 `token` |
+| POST | `/api/logout` | 退出（注销当前 token） |
 | GET | `/api/me` | 登录状态 + 服务器信息 |
 | POST | `/api/password` | `{oldPassword, newPassword}` 改密码 |
 | GET | `/api/netease/status` | 网易云绑定状态 |
@@ -248,6 +302,20 @@ git clone https://github.com/DRa6a/CS.git
 | GET | `/api/entries` | 最近点歌与状态 |
 | POST | `/api/message` | `{target, text}` 发消息给玩家或全服，进游戏聊天栏 |
 | GET | `/api/chat` | 游戏内对话（玩家发言 + 网页消息），带来源标记 |
+
+`target` 的取值：玩家名 / `__all__`（全服，需 `allowBroadcast`）/ `self` 或留空（自己）。
+
+### 错误格式
+
+失败时 HTTP 状态码和 JSON 一起给：
+
+```json
+{ "ok": false, "error": "玩家 Alex 不在线" }
+```
+
+`400` 参数不对 / 目标不在线、`401` 未登录或 token 过期、`403` 功能被关掉、`405` 方法不对、`429` 冷却中、`502` 网易云那边失败、`5xx` 服务端异常。
+
+`/api/players`、`/api/entries`、`/api/chat` 带 `ETag`，内容没变回 `304`——轮询时把上一次的 `ETag` 塞进 `If-None-Match` 就能省流量。
 
 ---
 
